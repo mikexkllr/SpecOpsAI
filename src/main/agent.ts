@@ -98,7 +98,7 @@ function parseResponse(text: string): { artifact?: string; reply: string } {
   return { artifact, reply };
 }
 
-type ChatMessage = { role: "user" | "assistant"; content: string };
+export type ChatMessage = { role: "user" | "assistant"; content: string };
 
 function toMessages(history: AgentTurn[], userMessage: string): ChatMessage[] {
   const msgs: ChatMessage[] = history.map((m) => ({
@@ -223,6 +223,14 @@ async function dispatch(
     case "openswe":
       return callOpenSwe(cfg, system, messages);
   }
+}
+
+export async function callProvider(
+  system: string,
+  messages: ChatMessage[],
+): Promise<string> {
+  const cfg = await getActiveProvider();
+  return dispatch(cfg, system, messages);
 }
 
 export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurnResult> {

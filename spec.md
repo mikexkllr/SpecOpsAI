@@ -158,8 +158,8 @@
 - [x] Iterative spec refinement (chat + editor)
 - [x] Derive User Stories from Spec
 - [x] Derive Technical Stories from User Stories
-- [ ] Task decomposition (chunking) per Technical Story
-- [ ] Spawn dedicated sub-agent with isolated context window per Technical Story
+- [x] Task decomposition (chunking) per Technical Story
+- [x] Spawn dedicated sub-agent with isolated context window per Technical Story
 
 ### Agent Modes
 - [ ] Implement YOLO Mode (fully autonomous, unattended runs)

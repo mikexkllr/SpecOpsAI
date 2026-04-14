@@ -38,6 +38,51 @@ export interface AgentTurnResult {
   artifact?: { key: keyof ArtifactFiles; content: string };
 }
 
+export interface TechnicalStory {
+  id: string;
+  title: string;
+  body: string;
+}
+
+export type TaskStatus = "pending" | "in-progress" | "done";
+
+export interface TaskChunk {
+  id: string;
+  title: string;
+  description: string;
+  status: TaskStatus;
+}
+
+export interface SubAgentMessage {
+  role: "user" | "agent";
+  text: string;
+}
+
+export type SubAgentStatus = "idle" | "decomposing" | "running" | "done";
+
+export interface SubAgentState {
+  storyId: string;
+  tasks: TaskChunk[];
+  messages: SubAgentMessage[];
+  status: SubAgentStatus;
+  error?: string;
+}
+
+export type SubAgentStore = Record<string, SubAgentState>;
+
+export interface SubAgentDecomposeRequest {
+  specPath: string;
+  story: TechnicalStory;
+  artifacts: ArtifactFiles;
+}
+
+export interface SubAgentChatRequest {
+  specPath: string;
+  story: TechnicalStory;
+  artifacts: ArtifactFiles;
+  message: string;
+}
+
 export type ProviderId = "anthropic" | "openai" | "ollama" | "openswe";
 
 export interface ProviderConfig {
@@ -113,6 +158,16 @@ export interface SpecOpsApi {
     content: string,
   ): Promise<void>;
   agentChat(request: AgentTurnRequest): Promise<AgentTurnResult>;
+  readSubAgents(specPath: string): Promise<SubAgentStore>;
+  decomposeStory(request: SubAgentDecomposeRequest): Promise<SubAgentState>;
+  subAgentChat(request: SubAgentChatRequest): Promise<SubAgentState>;
+  updateTaskStatus(
+    specPath: string,
+    storyId: string,
+    taskId: string,
+    status: TaskStatus,
+  ): Promise<SubAgentState>;
+  resetSubAgent(specPath: string, storyId: string): Promise<SubAgentStore>;
   getSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<AppSettings>;
 }

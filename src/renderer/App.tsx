@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { AgentTurn, ArtifactFiles, ProjectInfo, SpecInfo } from "../shared/api";
 import { Chat, type ChatMessage } from "./Chat";
+import { ImplementationView } from "./ImplementationView";
 import { PhaseNav } from "./PhaseNav";
 import { PhaseView } from "./PhaseView";
 import { ProjectBar } from "./ProjectBar";
@@ -203,18 +204,28 @@ export function App(): JSX.Element {
         }}
         onCreateSpec={handleCreateSpec}
       />
-      {ready ? (
+      {ready && activeSpec ? (
         <>
           <PhaseNav phase={phase} artifacts={artifacts} onSelect={setPhase} />
-          <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 360px", minHeight: 0 }}>
-            <PhaseView phase={phase} artifacts={artifacts} onChange={updateArtifacts} />
-            <Chat
-              phase={phase}
-              messages={messagesByPhase[phase]}
-              onSend={sendMessage}
-              pending={pending}
-            />
-          </div>
+          {phase === "implementation" ? (
+            <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+              <ImplementationView
+                specPath={activeSpec.path}
+                artifacts={artifacts}
+                onCodeChange={(code) => updateArtifacts({ code })}
+              />
+            </div>
+          ) : (
+            <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 360px", minHeight: 0 }}>
+              <PhaseView phase={phase} artifacts={artifacts} onChange={updateArtifacts} />
+              <Chat
+                phase={phase}
+                messages={messagesByPhase[phase]}
+                onSend={sendMessage}
+                pending={pending}
+              />
+            </div>
+          )}
         </>
       ) : (
         <EmptyState hasProject={!!project} onOpen={handleOpenProject} />

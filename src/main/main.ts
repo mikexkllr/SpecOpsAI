@@ -1,6 +1,13 @@
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import * as path from "path";
-import type { AgentTurnRequest, AppSettings, ArtifactFiles } from "../shared/api";
+import type {
+  AgentTurnRequest,
+  AppSettings,
+  ArtifactFiles,
+  SubAgentChatRequest,
+  SubAgentDecomposeRequest,
+  TaskStatus,
+} from "../shared/api";
 import { runAgentTurn } from "./agent";
 import {
   createSpec,
@@ -10,6 +17,13 @@ import {
   writeArtifact,
 } from "./project";
 import { loadSettings, saveSettings } from "./settings";
+import {
+  decomposeStory,
+  readSubAgents,
+  resetSubAgent,
+  subAgentChat,
+  updateTaskStatus,
+} from "./subagent";
 
 const isDev = !app.isPackaged;
 
@@ -60,6 +74,25 @@ function registerIpc(): void {
 
   ipcMain.handle("agent:chat", (_e, request: AgentTurnRequest) =>
     runAgentTurn(request),
+  );
+
+  ipcMain.handle("subagent:read", (_e, specPath: string) =>
+    readSubAgents(specPath),
+  );
+  ipcMain.handle(
+    "subagent:decompose",
+    (_e, request: SubAgentDecomposeRequest) => decomposeStory(request),
+  );
+  ipcMain.handle("subagent:chat", (_e, request: SubAgentChatRequest) =>
+    subAgentChat(request),
+  );
+  ipcMain.handle(
+    "subagent:update-task",
+    (_e, specPath: string, storyId: string, taskId: string, status: TaskStatus) =>
+      updateTaskStatus(specPath, storyId, taskId, status),
+  );
+  ipcMain.handle("subagent:reset", (_e, specPath: string, storyId: string) =>
+    resetSubAgent(specPath, storyId),
   );
 
   ipcMain.handle("settings:get", () => loadSettings());
