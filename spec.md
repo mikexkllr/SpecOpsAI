@@ -136,8 +136,8 @@
 ## Implementation Checklist
 
 ### Foundation
-- [ ] Choose desktop framework (Electron, Tauri, or similar)
-- [ ] Set up project scaffolding and build pipeline
+- [x] Choose desktop framework (Electron, Tauri, or similar) — **Electron**
+- [x] Set up project scaffolding and build pipeline
 - [ ] Integrate Open SWE (LangChain) as the agent backbone
 - [ ] Implement chat interface as primary control mechanism
 - [ ] Implement Git integration (auto-branch on project start)
