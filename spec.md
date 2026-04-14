@@ -139,19 +139,19 @@
 - [x] Choose desktop framework (Electron, Tauri, or similar) — **Electron**
 - [x] Set up project scaffolding and build pipeline
 - [ ] Integrate Open SWE (LangChain) as the agent backbone
-- [ ] Implement chat interface as primary control mechanism
+- [x] Implement chat interface as primary control mechanism
 - [ ] Implement Git integration (auto-branch on project start)
 - [ ] Define repository folder structure (one folder per Spec)
 - [ ] Support parallel Spec development
 
 ### Phase-Based UI (Progressive Disclosure)
-- [ ] Implement phase state machine (Spec → User Story → Technical Story → Implementation)
-- [ ] Build Spec Phase view (spec only, no code access)
-- [ ] Build User Story Phase view (stories visible, spec referenceable)
-- [ ] Build Technical Story Phase view (editable technical stories)
-- [ ] Build Implementation Phase view with integrated minimal code editor
-- [ ] Enforce code visibility lock until Implementation Phase
-- [ ] Provide structured editor option alongside chat in each phase
+- [x] Implement phase state machine (Spec → User Story → Technical Story → Implementation)
+- [x] Build Spec Phase view (spec only, no code access)
+- [x] Build User Story Phase view (stories visible, spec referenceable)
+- [x] Build Technical Story Phase view (editable technical stories)
+- [x] Build Implementation Phase view with integrated minimal code editor
+- [x] Enforce code visibility lock until Implementation Phase
+- [x] Provide structured editor option alongside chat in each phase
 
 ### Agent Workflow
 - [ ] Spec generation from chat input
