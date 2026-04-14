@@ -140,9 +140,9 @@
 - [x] Set up project scaffolding and build pipeline
 - [ ] Integrate Open SWE (LangChain) as the agent backbone
 - [x] Implement chat interface as primary control mechanism
-- [ ] Implement Git integration (auto-branch on project start)
-- [ ] Define repository folder structure (one folder per Spec)
-- [ ] Support parallel Spec development
+- [x] Implement Git integration (auto-branch on project start)
+- [x] Define repository folder structure (one folder per Spec)
+- [x] Support parallel Spec development
 
 ### Phase-Based UI (Progressive Disclosure)
 - [x] Implement phase state machine (Spec → User Story → Technical Story → Implementation)
@@ -182,8 +182,8 @@
 - [ ] Safety checks before merge (all tests green, branch up-to-date)
 
 ### Clear Artifact Separation
-- [ ] Spec artifact storage
-- [ ] User Stories artifact storage
-- [ ] Technical Stories artifact storage
-- [ ] Code artifact storage
+- [x] Spec artifact storage
+- [x] User Stories artifact storage
+- [x] Technical Stories artifact storage
+- [x] Code artifact storage
 - [ ] Cross-referencing between artifacts without breaking focus
