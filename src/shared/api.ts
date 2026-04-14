@@ -91,7 +91,7 @@ export interface SubAgentRunTaskRequest {
   autoComplete: boolean;
 }
 
-export type ProviderId = "anthropic" | "openai" | "ollama" | "openswe";
+export type ProviderId = "anthropic" | "openai" | "google" | "ollama" | "openswe";
 
 export interface ProviderConfig {
   id: ProviderId;
@@ -135,6 +135,15 @@ export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
     defaultModel: "gpt-4o",
     suggestedModels: ["gpt-4o", "gpt-4o-mini", "o1-mini"],
     description: "OpenAI Chat Completions API (or any compatible endpoint).",
+  },
+  {
+    id: "google",
+    label: "Google Gemini",
+    needsApiKey: true,
+    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    defaultModel: "gemini-2.5-pro",
+    suggestedModels: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-pro"],
+    description: "Gemini models via Google Generative Language API.",
   },
   {
     id: "ollama",

@@ -159,6 +159,38 @@ async function callOpenAI(
   return data.choices?.[0]?.message?.content?.trim() ?? "";
 }
 
+async function callGoogle(
+  cfg: ProviderConfig,
+  system: string,
+  messages: ChatMessage[],
+): Promise<string> {
+  if (!cfg.apiKey) throw new Error("Google API key is not set. Configure it in Settings.");
+  const base = cfg.baseUrl?.replace(/\/$/, "") || "https://generativelanguage.googleapis.com/v1beta";
+  const url = `${base}/models/${encodeURIComponent(cfg.model)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
+  const contents = messages.map((m) => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: m.content }],
+  }));
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: system }] },
+      contents,
+    }),
+  });
+  if (!res.ok) throw new Error(`Google ${res.status}: ${(await res.text()).slice(0, 500)}`);
+  const data = (await res.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  return (
+    data.candidates?.[0]?.content?.parts
+      ?.map((p) => p.text ?? "")
+      .join("")
+      .trim() ?? ""
+  );
+}
+
 async function callOllama(
   cfg: ProviderConfig,
   system: string,
@@ -218,6 +250,8 @@ async function dispatch(
       return callAnthropic(cfg, system, messages);
     case "openai":
       return callOpenAI(cfg, system, messages);
+    case "google":
+      return callGoogle(cfg, system, messages);
     case "ollama":
       return callOllama(cfg, system, messages);
     case "openswe":
