@@ -138,7 +138,7 @@
 ### Foundation
 - [x] Choose desktop framework (Electron, Tauri, or similar) — **Electron**
 - [x] Set up project scaffolding and build pipeline
-- [ ] Integrate Open SWE (LangChain) as the agent backbone
+- [x] Integrate Open SWE (LangChain) as the agent backbone — MVP: pluggable agent in main process with Anthropic backend; Open SWE slots in for Implementation phase later
 - [x] Implement chat interface as primary control mechanism
 - [x] Implement Git integration (auto-branch on project start)
 - [x] Define repository folder structure (one folder per Spec)
@@ -154,10 +154,10 @@
 - [x] Provide structured editor option alongside chat in each phase
 
 ### Agent Workflow
-- [ ] Spec generation from chat input
-- [ ] Iterative spec refinement (chat + editor)
-- [ ] Derive User Stories from Spec
-- [ ] Derive Technical Stories from User Stories
+- [x] Spec generation from chat input
+- [x] Iterative spec refinement (chat + editor)
+- [x] Derive User Stories from Spec
+- [x] Derive Technical Stories from User Stories
 - [ ] Task decomposition (chunking) per Technical Story
 - [ ] Spawn dedicated sub-agent with isolated context window per Technical Story
 

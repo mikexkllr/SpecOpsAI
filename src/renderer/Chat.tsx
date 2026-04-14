@@ -10,12 +10,14 @@ interface ChatProps {
   phase: Phase;
   messages: ChatMessage[];
   onSend: (text: string) => void;
+  pending?: boolean;
 }
 
-export function Chat({ phase, messages, onSend }: ChatProps): JSX.Element {
+export function Chat({ phase, messages, onSend, pending }: ChatProps): JSX.Element {
   const [draft, setDraft] = useState("");
 
   function submit(): void {
+    if (pending) return;
     const text = draft.trim();
     if (!text) return;
     onSend(text);
@@ -50,6 +52,21 @@ export function Chat({ phase, messages, onSend }: ChatProps): JSX.Element {
             {m.text}
           </div>
         ))}
+        {pending && (
+          <div
+            style={{
+              alignSelf: "flex-start",
+              background: "#23272e",
+              color: "#9aa",
+              padding: "6px 10px",
+              borderRadius: 8,
+              fontSize: 13,
+              fontStyle: "italic",
+            }}
+          >
+            Thinking…
+          </div>
+        )}
       </div>
       <div style={{ display: "flex", gap: 6, padding: 8, borderTop: "1px solid #2a2a2a" }}>
         <textarea
@@ -61,8 +78,9 @@ export function Chat({ phase, messages, onSend }: ChatProps): JSX.Element {
               submit();
             }
           }}
-          placeholder="Message the agent…"
+          placeholder={pending ? "Waiting for agent…" : "Message the agent…"}
           rows={2}
+          disabled={pending}
           style={{
             flex: 1,
             resize: "none",
@@ -73,17 +91,19 @@ export function Chat({ phase, messages, onSend }: ChatProps): JSX.Element {
             padding: 6,
             fontFamily: "inherit",
             fontSize: 13,
+            opacity: pending ? 0.6 : 1,
           }}
         />
         <button
           onClick={submit}
+          disabled={pending}
           style={{
-            background: "#2b6cb0",
+            background: pending ? "#1e3a5a" : "#2b6cb0",
             color: "white",
             border: "none",
             borderRadius: 6,
             padding: "0 14px",
-            cursor: "pointer",
+            cursor: pending ? "not-allowed" : "pointer",
           }}
         >
           Send

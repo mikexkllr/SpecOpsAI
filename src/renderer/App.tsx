@@ -1,12 +1,21 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { ArtifactFiles, ProjectInfo, SpecInfo } from "../shared/api";
+import type { AgentTurn, ArtifactFiles, ProjectInfo, SpecInfo } from "../shared/api";
 import { Chat, type ChatMessage } from "./Chat";
 import { PhaseNav } from "./PhaseNav";
 import { PhaseView } from "./PhaseView";
 import { ProjectBar } from "./ProjectBar";
+import { Settings } from "./Settings";
 import { EMPTY_ARTIFACTS, type Artifacts, type Phase } from "./phases";
+import { PROVIDER_DESCRIPTORS, type AppSettings } from "../shared/api";
 
 const ARTIFACT_KEYS: Record<keyof Artifacts, keyof ArtifactFiles> = {
+  spec: "spec",
+  userStories: "userStories",
+  technicalStories: "technicalStories",
+  code: "code",
+};
+
+const RENDERER_ARTIFACT_KEYS: Record<keyof ArtifactFiles, keyof Artifacts> = {
   spec: "spec",
   userStories: "userStories",
   technicalStories: "technicalStories",
@@ -24,7 +33,14 @@ export function App(): JSX.Element {
     "technical-story": [],
     implementation: [],
   });
+  const [pending, setPending] = useState(false);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const saveTimers = useRef<Partial<Record<keyof Artifacts, number>>>({});
+
+  useEffect(() => {
+    window.specops.getSettings().then(setSettings);
+  }, []);
 
   useEffect(() => {
     if (!activeSpec) {
@@ -64,7 +80,7 @@ export function App(): JSX.Element {
     setPhase("spec");
   }
 
-  function updateArtifacts(patch: Partial<Artifacts>): void {
+  function updateArtifacts(patch: Partial<Artifacts>, opts?: { flush?: boolean }): void {
     setArtifacts((a) => ({ ...a, ...patch }));
     if (!activeSpec) return;
     const specPath = activeSpec.path;
@@ -73,21 +89,56 @@ export function App(): JSX.Element {
       if (value === undefined) continue;
       const existing = saveTimers.current[key];
       if (existing) window.clearTimeout(existing);
-      saveTimers.current[key] = window.setTimeout(() => {
-        window.specops.writeArtifact(specPath, ARTIFACT_KEYS[key], value);
-      }, 300);
+      if (opts?.flush) {
+        saveTimers.current[key] = undefined;
+        void window.specops.writeArtifact(specPath, ARTIFACT_KEYS[key], value);
+      } else {
+        saveTimers.current[key] = window.setTimeout(() => {
+          window.specops.writeArtifact(specPath, ARTIFACT_KEYS[key], value);
+        }, 300);
+      }
     }
   }
 
-  function sendMessage(text: string): void {
+  async function sendMessage(text: string): Promise<void> {
+    if (pending || !activeSpec) return;
+    const history: AgentTurn[] = messagesByPhase[phase].map((m) => ({
+      role: m.role,
+      text: m.text,
+    }));
     setMessagesByPhase((prev) => ({
       ...prev,
-      [phase]: [
-        ...prev[phase],
-        { role: "user", text },
-        { role: "agent", text: "(agent backend not yet wired — Open SWE integration pending)" },
-      ],
+      [phase]: [...prev[phase], { role: "user", text }],
     }));
+    setPending(true);
+    try {
+      const result = await window.specops.agentChat({
+        phase,
+        artifacts,
+        history,
+        message: text,
+      });
+      if (result.artifact) {
+        const artifactKey = RENDERER_ARTIFACT_KEYS[result.artifact.key];
+        updateArtifacts({ [artifactKey]: result.artifact.content } as Partial<Artifacts>, {
+          flush: true,
+        });
+      }
+      setMessagesByPhase((prev) => ({
+        ...prev,
+        [phase]: [...prev[phase], { role: "agent", text: result.reply }],
+      }));
+    } catch (err) {
+      setMessagesByPhase((prev) => ({
+        ...prev,
+        [phase]: [
+          ...prev[phase],
+          { role: "agent", text: `Agent error: ${(err as Error).message}` },
+        ],
+      }));
+    } finally {
+      setPending(false);
+    }
   }
 
   const ready = !!activeSpec;
@@ -113,10 +164,35 @@ export function App(): JSX.Element {
         }}
       >
         <div style={{ fontWeight: 600 }}>SpecOps AI</div>
-        <div style={{ fontSize: 12, opacity: 0.6 }}>
-          {activeSpec ? `${activeSpec.name} · ${activeSpec.branch}` : "Spec-Driven Development IDE"}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ fontSize: 12, opacity: 0.6 }}>
+            {activeSpec
+              ? `${activeSpec.name} · ${activeSpec.branch}`
+              : "Spec-Driven Development IDE"}
+          </div>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            title="Settings"
+            style={{
+              background: "#1e1e1e",
+              color: "#ddd",
+              border: "1px solid #333",
+              padding: "4px 10px",
+              borderRadius: 4,
+              cursor: "pointer",
+              fontSize: 12,
+            }}
+          >
+            {providerLabel(settings)}
+          </button>
         </div>
       </header>
+      {settingsOpen && (
+        <Settings
+          onClose={() => setSettingsOpen(false)}
+          onSaved={(s) => setSettings(s)}
+        />
+      )}
       <ProjectBar
         project={project}
         activeSpec={activeSpec}
@@ -132,7 +208,12 @@ export function App(): JSX.Element {
           <PhaseNav phase={phase} artifacts={artifacts} onSelect={setPhase} />
           <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 360px", minHeight: 0 }}>
             <PhaseView phase={phase} artifacts={artifacts} onChange={updateArtifacts} />
-            <Chat phase={phase} messages={messagesByPhase[phase]} onSend={sendMessage} />
+            <Chat
+              phase={phase}
+              messages={messagesByPhase[phase]}
+              onSend={sendMessage}
+              pending={pending}
+            />
           </div>
         </>
       ) : (
@@ -140,6 +221,13 @@ export function App(): JSX.Element {
       )}
     </div>
   );
+}
+
+function providerLabel(settings: AppSettings | null): string {
+  if (!settings) return "⚙ Settings";
+  const d = PROVIDER_DESCRIPTORS.find((p) => p.id === settings.activeProvider);
+  const cfg = settings.providers[settings.activeProvider];
+  return `⚙ ${d?.label ?? settings.activeProvider} · ${cfg.model}`;
 }
 
 function EmptyState({

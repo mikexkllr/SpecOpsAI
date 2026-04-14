@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import * as path from "path";
-import type { ArtifactFiles } from "../shared/api";
+import type { AgentTurnRequest, AppSettings, ArtifactFiles } from "../shared/api";
+import { runAgentTurn } from "./agent";
 import {
   createSpec,
   listSpecs,
@@ -8,6 +9,7 @@ import {
   readArtifacts,
   writeArtifact,
 } from "./project";
+import { loadSettings, saveSettings } from "./settings";
 
 const isDev = !app.isPackaged;
 
@@ -54,6 +56,15 @@ function registerIpc(): void {
     "spec:write",
     (_e, specPath: string, artifact: keyof ArtifactFiles, content: string) =>
       writeArtifact(specPath, artifact, content),
+  );
+
+  ipcMain.handle("agent:chat", (_e, request: AgentTurnRequest) =>
+    runAgentTurn(request),
+  );
+
+  ipcMain.handle("settings:get", () => loadSettings());
+  ipcMain.handle("settings:save", (_e, settings: AppSettings) =>
+    saveSettings(settings),
   );
 }
 

@@ -10,6 +10,9 @@ const api: SpecOpsApi = {
   readArtifacts: (specPath) => ipcRenderer.invoke("spec:read", specPath),
   writeArtifact: (specPath, artifact: keyof ArtifactFiles, content) =>
     ipcRenderer.invoke("spec:write", specPath, artifact, content),
+  agentChat: (request) => ipcRenderer.invoke("agent:chat", request),
+  getSettings: () => ipcRenderer.invoke("settings:get"),
+  saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
 };
 
 contextBridge.exposeInMainWorld("specops", api);
