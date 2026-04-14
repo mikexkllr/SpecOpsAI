@@ -83,6 +83,14 @@ export interface SubAgentChatRequest {
   message: string;
 }
 
+export interface SubAgentRunTaskRequest {
+  specPath: string;
+  story: TechnicalStory;
+  artifacts: ArtifactFiles;
+  taskId: string;
+  autoComplete: boolean;
+}
+
 export type ProviderId = "anthropic" | "openai" | "ollama" | "openswe";
 
 export interface ProviderConfig {
@@ -92,9 +100,12 @@ export interface ProviderConfig {
   baseUrl?: string;
 }
 
+export type AgentMode = "yolo" | "hitl";
+
 export interface AppSettings {
   activeProvider: ProviderId;
   providers: Record<ProviderId, ProviderConfig>;
+  agentMode: AgentMode;
 }
 
 export interface ProviderDescriptor {
@@ -161,6 +172,7 @@ export interface SpecOpsApi {
   readSubAgents(specPath: string): Promise<SubAgentStore>;
   decomposeStory(request: SubAgentDecomposeRequest): Promise<SubAgentState>;
   subAgentChat(request: SubAgentChatRequest): Promise<SubAgentState>;
+  runSubAgentTask(request: SubAgentRunTaskRequest): Promise<SubAgentState>;
   updateTaskStatus(
     specPath: string,
     storyId: string,

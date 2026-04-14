@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import {
   PROVIDER_DESCRIPTORS,
+  type AgentMode,
   type AppSettings,
   type ProviderConfig,
   type ProviderId,
@@ -121,10 +122,14 @@ export function Settings({ onClose, onSaved }: Props): JSX.Element {
             })}
           </div>
 
-          <div style={{ padding: 16, overflowY: "auto" }}>
+          <div style={{ padding: 16, overflowY: "auto", display: "flex", flexDirection: "column", gap: 20 }}>
             <ProviderForm
               cfg={settings.providers[active]}
               onChange={(patch) => updateProvider(active, patch)}
+            />
+            <AgentModeSection
+              mode={settings.agentMode}
+              onChange={(agentMode) => setSettings({ ...settings, agentMode })}
             />
           </div>
         </div>
@@ -223,6 +228,60 @@ function ProviderForm({
           />
         </Field>
       )}
+    </div>
+  );
+}
+
+function AgentModeSection({
+  mode,
+  onChange,
+}: {
+  mode: AgentMode;
+  onChange: (m: AgentMode) => void;
+}): JSX.Element {
+  const options: Array<{ id: AgentMode; label: string; description: string }> = [
+    {
+      id: "hitl",
+      label: "Human-in-the-Loop",
+      description: "Pause after each task for confirmation before continuing.",
+    },
+    {
+      id: "yolo",
+      label: "YOLO (autonomous)",
+      description: "Run all pending tasks end-to-end without stopping — fit for unattended runs.",
+    },
+  ];
+  return (
+    <div style={{ borderTop: "1px solid #2a2a2a", paddingTop: 16 }}>
+      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>Agent mode</div>
+      <div style={{ opacity: 0.65, fontSize: 12, marginBottom: 10 }}>
+        Controls how sub-agents advance through Technical Story tasks.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {options.map((opt) => {
+          const active = opt.id === mode;
+          return (
+            <button
+              key={opt.id}
+              onClick={() => onChange(opt.id)}
+              style={{
+                textAlign: "left",
+                background: active ? "#1e3a5a" : "#1a1a1a",
+                border: "1px solid " + (active ? "#2b6cb0" : "#333"),
+                color: "#e6e6e6",
+                borderRadius: 6,
+                padding: "8px 10px",
+                cursor: "pointer",
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{opt.label}</div>
+              <div style={{ fontSize: 12, opacity: 0.75, marginTop: 2 }}>
+                {opt.description}
+              </div>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

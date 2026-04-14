@@ -3,10 +3,13 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import {
   PROVIDER_DESCRIPTORS,
+  type AgentMode,
   type AppSettings,
   type ProviderConfig,
   type ProviderId,
 } from "../shared/api";
+
+const AGENT_MODES: AgentMode[] = ["yolo", "hitl"];
 
 function settingsPath(): string {
   return path.join(app.getPath("userData"), "settings.json");
@@ -25,7 +28,7 @@ function defaultProvider(id: ProviderId): ProviderConfig {
 function defaultSettings(): AppSettings {
   const providers = {} as Record<ProviderId, ProviderConfig>;
   for (const d of PROVIDER_DESCRIPTORS) providers[d.id] = defaultProvider(d.id);
-  return { activeProvider: "anthropic", providers };
+  return { activeProvider: "anthropic", providers, agentMode: "hitl" };
 }
 
 function mergeSettings(raw: unknown): AppSettings {
@@ -34,6 +37,9 @@ function mergeSettings(raw: unknown): AppSettings {
   const r = raw as Partial<AppSettings>;
   if (r.activeProvider && PROVIDER_DESCRIPTORS.some((d) => d.id === r.activeProvider)) {
     base.activeProvider = r.activeProvider;
+  }
+  if (r.agentMode && AGENT_MODES.includes(r.agentMode)) {
+    base.agentMode = r.agentMode;
   }
   if (r.providers && typeof r.providers === "object") {
     for (const d of PROVIDER_DESCRIPTORS) {

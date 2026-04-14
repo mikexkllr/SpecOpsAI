@@ -14,6 +14,7 @@ const api: SpecOpsApi = {
   readSubAgents: (specPath) => ipcRenderer.invoke("subagent:read", specPath),
   decomposeStory: (request) => ipcRenderer.invoke("subagent:decompose", request),
   subAgentChat: (request) => ipcRenderer.invoke("subagent:chat", request),
+  runSubAgentTask: (request) => ipcRenderer.invoke("subagent:run-task", request),
   updateTaskStatus: (specPath, storyId, taskId, status) =>
     ipcRenderer.invoke("subagent:update-task", specPath, storyId, taskId, status),
   resetSubAgent: (specPath, storyId) =>

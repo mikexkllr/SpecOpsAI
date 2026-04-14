@@ -4,6 +4,7 @@ import type {
   ArtifactFiles,
   SubAgentChatRequest,
   SubAgentDecomposeRequest,
+  SubAgentRunTaskRequest,
   SubAgentState,
   SubAgentStore,
   TaskChunk,
@@ -205,6 +206,85 @@ export async function subAgentChat(
   } catch (err) {
     const next: SubAgentState = {
       ...working,
+      messages: [
+        ...working.messages,
+        { role: "agent", text: `Sub-agent error: ${(err as Error).message}` },
+      ],
+      status: "idle",
+      error: (err as Error).message,
+    };
+    store[req.story.id] = next;
+    await saveStore(req.specPath, store);
+    return next;
+  }
+}
+
+function taskPrompt(task: TaskChunk, story: TechnicalStory): string {
+  return [
+    `Work on task ${task.id} — "${task.title}" — of story ${story.id}.`,
+    task.description ? `Acceptance: ${task.description}` : "",
+    "Produce a concrete, reviewable implementation proposal (code diff outline, files to touch, edge cases).",
+    "Keep the response focused on THIS task only.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export async function runSubAgentTask(
+  req: SubAgentRunTaskRequest,
+): Promise<SubAgentState> {
+  const store = await loadStore(req.specPath);
+  const prev = store[req.story.id] ?? emptyState(req.story.id);
+  const task = prev.tasks.find((t) => t.id === req.taskId);
+  if (!task) {
+    return {
+      ...prev,
+      error: `Task ${req.taskId} not found — decompose the story first.`,
+    };
+  }
+
+  const inProgressTasks = prev.tasks.map((t) =>
+    t.id === task.id ? { ...t, status: "in-progress" as TaskStatus } : t,
+  );
+  const userTurn = { role: "user" as const, text: taskPrompt(task, req.story) };
+  const working: SubAgentState = {
+    ...prev,
+    tasks: inProgressTasks,
+    messages: [...prev.messages, userTurn],
+    status: "running",
+    error: undefined,
+  };
+  store[req.story.id] = working;
+  await saveStore(req.specPath, store);
+
+  try {
+    const system = chatSystemPrompt(req.story, inProgressTasks, req.artifacts);
+    const messages: ChatMessage[] = [
+      ...prev.messages.map<ChatMessage>((m) => ({
+        role: m.role === "user" ? "user" : "assistant",
+        content: m.text,
+      })),
+      { role: "user", content: userTurn.text },
+    ];
+    const reply = (await callProvider(system, messages)).trim() || "(no reply)";
+    const finalTasks = req.autoComplete
+      ? inProgressTasks.map((t) =>
+          t.id === task.id ? { ...t, status: "done" as TaskStatus } : t,
+        )
+      : inProgressTasks;
+    const next: SubAgentState = {
+      ...working,
+      tasks: finalTasks,
+      messages: [...working.messages, { role: "agent", text: reply }],
+      status: allDone(finalTasks) ? "done" : "idle",
+    };
+    store[req.story.id] = next;
+    await saveStore(req.specPath, store);
+    return next;
+  } catch (err) {
+    const next: SubAgentState = {
+      ...working,
+      tasks: prev.tasks,
       messages: [
         ...working.messages,
         { role: "agent", text: `Sub-agent error: ${(err as Error).message}` },

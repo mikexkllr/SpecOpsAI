@@ -6,6 +6,7 @@ import type {
   ArtifactFiles,
   SubAgentChatRequest,
   SubAgentDecomposeRequest,
+  SubAgentRunTaskRequest,
   TaskStatus,
 } from "../shared/api";
 import { runAgentTurn } from "./agent";
@@ -21,6 +22,7 @@ import {
   decomposeStory,
   readSubAgents,
   resetSubAgent,
+  runSubAgentTask,
   subAgentChat,
   updateTaskStatus,
 } from "./subagent";
@@ -85,6 +87,9 @@ function registerIpc(): void {
   );
   ipcMain.handle("subagent:chat", (_e, request: SubAgentChatRequest) =>
     subAgentChat(request),
+  );
+  ipcMain.handle("subagent:run-task", (_e, request: SubAgentRunTaskRequest) =>
+    runSubAgentTask(request),
   );
   ipcMain.handle(
     "subagent:update-task",

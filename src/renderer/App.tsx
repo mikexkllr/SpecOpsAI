@@ -7,7 +7,7 @@ import { PhaseView } from "./PhaseView";
 import { ProjectBar } from "./ProjectBar";
 import { Settings } from "./Settings";
 import { EMPTY_ARTIFACTS, type Artifacts, type Phase } from "./phases";
-import { PROVIDER_DESCRIPTORS, type AppSettings } from "../shared/api";
+import { PROVIDER_DESCRIPTORS, type AgentMode, type AppSettings } from "../shared/api";
 
 const ARTIFACT_KEYS: Record<keyof Artifacts, keyof ArtifactFiles> = {
   spec: "spec",
@@ -171,6 +171,17 @@ export function App(): JSX.Element {
               ? `${activeSpec.name} · ${activeSpec.branch}`
               : "Spec-Driven Development IDE"}
           </div>
+          <ModeToggle
+            mode={settings?.agentMode ?? "hitl"}
+            disabled={!settings}
+            onChange={async (mode) => {
+              if (!settings || settings.agentMode === mode) return;
+              const next = { ...settings, agentMode: mode };
+              setSettings(next);
+              const saved = await window.specops.saveSettings(next);
+              setSettings(saved);
+            }}
+          />
           <button
             onClick={() => setSettingsOpen(true)}
             title="Settings"
@@ -212,6 +223,7 @@ export function App(): JSX.Element {
               <ImplementationView
                 specPath={activeSpec.path}
                 artifacts={artifacts}
+                agentMode={settings?.agentMode ?? "hitl"}
                 onCodeChange={(code) => updateArtifacts({ code })}
               />
             </div>
@@ -230,6 +242,56 @@ export function App(): JSX.Element {
       ) : (
         <EmptyState hasProject={!!project} onOpen={handleOpenProject} />
       )}
+    </div>
+  );
+}
+
+function ModeToggle({
+  mode,
+  disabled,
+  onChange,
+}: {
+  mode: AgentMode;
+  disabled: boolean;
+  onChange: (m: AgentMode) => void;
+}): JSX.Element {
+  const modes: Array<{ id: AgentMode; label: string; hint: string }> = [
+    { id: "hitl", label: "HITL", hint: "Human-in-the-loop: confirm each task" },
+    { id: "yolo", label: "YOLO", hint: "Autonomous: run all tasks unattended" },
+  ];
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        border: "1px solid #333",
+        borderRadius: 4,
+        overflow: "hidden",
+        fontSize: 12,
+        opacity: disabled ? 0.5 : 1,
+      }}
+      title="Agent mode"
+    >
+      {modes.map((m) => {
+        const active = m.id === mode;
+        return (
+          <button
+            key={m.id}
+            onClick={() => onChange(m.id)}
+            disabled={disabled}
+            title={m.hint}
+            style={{
+              background: active ? (m.id === "yolo" ? "#7a4a00" : "#1e3a5a") : "#141414",
+              color: active ? "#fff" : "#aaa",
+              border: "none",
+              padding: "4px 10px",
+              cursor: disabled ? "not-allowed" : "pointer",
+              fontWeight: active ? 600 : 400,
+            }}
+          >
+            {m.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

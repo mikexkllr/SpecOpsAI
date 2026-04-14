@@ -162,9 +162,9 @@
 - [x] Spawn dedicated sub-agent with isolated context window per Technical Story
 
 ### Agent Modes
-- [ ] Implement YOLO Mode (fully autonomous, unattended runs)
-- [ ] Implement Human-in-the-Loop Mode (tool-call confirmation)
-- [ ] Mode switch UI
+- [x] Implement YOLO Mode (fully autonomous, unattended runs)
+- [x] Implement Human-in-the-Loop Mode (tool-call confirmation)
+- [x] Mode switch UI
 
 ### Testing System
 - [ ] Auto-generate Unit Tests from Technical Stories

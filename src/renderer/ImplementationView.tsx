@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  AgentMode,
   ArtifactFiles,
   SubAgentState,
   SubAgentStore,
@@ -12,6 +13,7 @@ import { parseTechnicalStories } from "./technical-stories";
 interface ImplementationViewProps {
   specPath: string;
   artifacts: Artifacts;
+  agentMode: AgentMode;
   onCodeChange: (code: string) => void;
 }
 
@@ -41,6 +43,7 @@ function toApiArtifacts(a: Artifacts): ArtifactFiles {
 export function ImplementationView({
   specPath,
   artifacts,
+  agentMode,
   onCodeChange,
 }: ImplementationViewProps): JSX.Element {
   const stories = useMemo(
@@ -50,8 +53,13 @@ export function ImplementationView({
   const [tab, setTab] = useState<Tab>("stories");
   const [selectedId, setSelectedId] = useState<string | null>(stories[0]?.id ?? null);
   const [store, setStore] = useState<SubAgentStore>({});
-  const [busy, setBusy] = useState<"decompose" | "chat" | null>(null);
+  const [busy, setBusy] = useState<"decompose" | "chat" | "run" | null>(null);
   const [draft, setDraft] = useState("");
+  const [pendingApproval, setPendingApproval] = useState<{
+    storyId: string;
+    taskId: string;
+  } | null>(null);
+  const stopRef = useRef(false);
 
   useEffect(() => {
     window.specops.readSubAgents(specPath).then(setStore);
@@ -114,6 +122,82 @@ export function ImplementationView({
     if (!selectedStory) return;
     const next = await window.specops.resetSubAgent(specPath, selectedStory.id);
     setStore(next);
+    setPendingApproval(null);
+  }
+
+  async function runTask(
+    story: TechnicalStory,
+    taskId: string,
+    autoComplete: boolean,
+  ): Promise<SubAgentState> {
+    const state = await window.specops.runSubAgentTask({
+      specPath,
+      story,
+      artifacts: toApiArtifacts(artifacts),
+      taskId,
+      autoComplete,
+    });
+    setStore((s) => ({ ...s, [state.storyId]: state }));
+    return state;
+  }
+
+  async function runStory(): Promise<void> {
+    if (!selectedStory || busy) return;
+    stopRef.current = false;
+    setBusy("run");
+    setPendingApproval(null);
+    try {
+      let state =
+        store[selectedStory.id] ??
+        (await window.specops.readSubAgents(specPath).then((s) => {
+          setStore(s);
+          return s[selectedStory.id];
+        }));
+      if (!state || state.tasks.length === 0) {
+        state = await window.specops.decomposeStory({
+          specPath,
+          story: selectedStory,
+          artifacts: toApiArtifacts(artifacts),
+        });
+        setStore((s) => ({ ...s, [state!.storyId]: state! }));
+        if (state.error || state.tasks.length === 0) return;
+      }
+      while (!stopRef.current) {
+        const next = state.tasks.find((t) => t.status !== "done");
+        if (!next) break;
+        const isYolo = agentMode === "yolo";
+        state = await runTask(selectedStory, next.id, isYolo);
+        if (state.error) break;
+        if (!isYolo) {
+          setPendingApproval({ storyId: selectedStory.id, taskId: next.id });
+          return;
+        }
+      }
+    } finally {
+      setBusy((b) => (b === "run" ? null : b));
+    }
+  }
+
+  async function approveTask(): Promise<void> {
+    if (!pendingApproval || !selectedStory) return;
+    const state = await window.specops.updateTaskStatus(
+      specPath,
+      pendingApproval.storyId,
+      pendingApproval.taskId,
+      "done",
+    );
+    setStore((s) => ({ ...s, [state.storyId]: state }));
+    setPendingApproval(null);
+    void runStory();
+  }
+
+  function rejectTask(): void {
+    setPendingApproval(null);
+  }
+
+  function stopRun(): void {
+    stopRef.current = true;
+    setPendingApproval(null);
   }
 
   if (tab === "code") {
@@ -161,10 +245,20 @@ export function ImplementationView({
               draft={draft}
               setDraft={setDraft}
               busy={busy}
+              agentMode={agentMode}
+              pendingApproval={
+                pendingApproval && pendingApproval.storyId === selectedStory.id
+                  ? pendingApproval.taskId
+                  : null
+              }
               onDecompose={decompose}
               onSend={sendChat}
               onCycleTask={cycleTask}
               onReset={resetStory}
+              onRun={runStory}
+              onStop={stopRun}
+              onApprove={approveTask}
+              onReject={rejectTask}
             />
           ) : (
             <div style={{ padding: 24, opacity: 0.6 }}>Select a story.</div>
@@ -290,20 +384,32 @@ function StoryWorkspace({
   draft,
   setDraft,
   busy,
+  agentMode,
+  pendingApproval,
   onDecompose,
   onSend,
   onCycleTask,
   onReset,
+  onRun,
+  onStop,
+  onApprove,
+  onReject,
 }: {
   story: TechnicalStory;
   state: SubAgentState | null;
   draft: string;
   setDraft: (v: string) => void;
-  busy: "decompose" | "chat" | null;
+  busy: "decompose" | "chat" | "run" | null;
+  agentMode: AgentMode;
+  pendingApproval: string | null;
   onDecompose: () => void;
   onSend: () => void;
   onCycleTask: (taskId: string, current: TaskStatus) => void;
   onReset: () => void;
+  onRun: () => void;
+  onStop: () => void;
+  onApprove: () => void;
+  onReject: () => void;
 }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -336,7 +442,45 @@ function StoryWorkspace({
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div style={{ fontSize: 12, fontWeight: 600, flex: 1 }}>
             Tasks {tasks.length > 0 && `(${tasks.length})`}
+            <span
+              style={{
+                marginLeft: 8,
+                fontSize: 10,
+                padding: "1px 6px",
+                borderRadius: 3,
+                background: agentMode === "yolo" ? "#4a2e00" : "#1e3a5a",
+                color: "#fff",
+                fontWeight: 500,
+              }}
+            >
+              {agentMode === "yolo" ? "YOLO" : "HITL"}
+            </span>
           </div>
+          {busy === "run" ? (
+            <button
+              onClick={onStop}
+              style={{ ...buttonStyle(false), background: "#3a1e1e" }}
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              onClick={onRun}
+              disabled={busy !== null || pendingApproval !== null}
+              style={{
+                ...buttonStyle(false),
+                background: agentMode === "yolo" ? "#7a4a00" : "#1e3a5a",
+                color: "#fff",
+              }}
+              title={
+                agentMode === "yolo"
+                  ? "Autonomously run all pending tasks"
+                  : "Run next task, then wait for your confirmation"
+              }
+            >
+              {agentMode === "yolo" ? "Run all (YOLO)" : "Run next"}
+            </button>
+          )}
           <button
             onClick={onDecompose}
             disabled={busy !== null}
@@ -358,6 +502,37 @@ function StoryWorkspace({
             </button>
           )}
         </div>
+        {pendingApproval && (
+          <div
+            style={{
+              marginTop: 10,
+              padding: "8px 10px",
+              background: "#1e2a3a",
+              border: "1px solid #2b6cb0",
+              borderRadius: 4,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 12,
+            }}
+          >
+            <span style={{ flex: 1 }}>
+              HITL: confirm completion of <strong>{pendingApproval}</strong> to continue.
+            </span>
+            <button
+              onClick={onApprove}
+              style={{ ...buttonStyle(false), background: "#2f855a", color: "#fff" }}
+            >
+              Approve & continue
+            </button>
+            <button
+              onClick={onReject}
+              style={{ ...buttonStyle(false), background: "#3a1e1e" }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
         {state?.error && (
           <div style={{ color: "#ff8080", fontSize: 12, marginTop: 8 }}>{state.error}</div>
         )}
@@ -433,7 +608,7 @@ function StoryWorkspace({
                 {m.text}
               </div>
             ))}
-            {busy === "chat" && (
+            {(busy === "chat" || busy === "run") && (
               <div
                 style={{
                   alignSelf: "flex-start",
@@ -445,7 +620,7 @@ function StoryWorkspace({
                   fontStyle: "italic",
                 }}
               >
-                Thinking…
+                {busy === "run" ? "Sub-agent working…" : "Thinking…"}
               </div>
             )}
           </div>
