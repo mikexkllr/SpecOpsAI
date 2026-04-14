@@ -101,7 +101,21 @@ export function Settings({ onClose, onSaved }: Props): JSX.Element {
               return (
                 <button
                   key={d.id}
-                  onClick={() => setSettings({ ...settings, activeProvider: d.id })}
+                  onClick={() =>
+                    setSettings({
+                      ...settings,
+                      activeProvider: d.id,
+                      providers: {
+                        ...settings.providers,
+                        [d.id]: settings.providers[d.id] ?? {
+                          id: d.id,
+                          model: d.defaultModel,
+                          apiKey: d.needsApiKey ? "" : undefined,
+                          baseUrl: d.defaultBaseUrl,
+                        },
+                      },
+                    })
+                  }
                   style={{
                     background: isActive ? "#2b6cb0" : "transparent",
                     color: isActive ? "white" : "#ddd",
@@ -124,7 +138,17 @@ export function Settings({ onClose, onSaved }: Props): JSX.Element {
 
           <div style={{ padding: 16, overflowY: "auto", display: "flex", flexDirection: "column", gap: 20 }}>
             <ProviderForm
-              cfg={settings.providers[active]}
+              cfg={
+                settings.providers[active] ?? {
+                  id: active,
+                  model:
+                    PROVIDER_DESCRIPTORS.find((p) => p.id === active)?.defaultModel ?? "",
+                  apiKey: PROVIDER_DESCRIPTORS.find((p) => p.id === active)?.needsApiKey
+                    ? ""
+                    : undefined,
+                  baseUrl: PROVIDER_DESCRIPTORS.find((p) => p.id === active)?.defaultBaseUrl,
+                }
+              }
               onChange={(patch) => updateProvider(active, patch)}
             />
             <AgentModeSection

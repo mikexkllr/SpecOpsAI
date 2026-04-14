@@ -300,7 +300,8 @@ function providerLabel(settings: AppSettings | null): string {
   if (!settings) return "⚙ Settings";
   const d = PROVIDER_DESCRIPTORS.find((p) => p.id === settings.activeProvider);
   const cfg = settings.providers[settings.activeProvider];
-  return `⚙ ${d?.label ?? settings.activeProvider} · ${cfg.model}`;
+  const model = cfg?.model ?? d?.defaultModel ?? "";
+  return `⚙ ${d?.label ?? settings.activeProvider} · ${model}`;
 }
 
 function EmptyState({
