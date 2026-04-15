@@ -19,6 +19,8 @@ const api: SpecOpsApi = {
     ipcRenderer.invoke("subagent:update-task", specPath, storyId, taskId, status),
   resetSubAgent: (specPath, storyId) =>
     ipcRenderer.invoke("subagent:reset", specPath, storyId),
+  generateUnitTests: (request) =>
+    ipcRenderer.invoke("subagent:generate-unit-tests", request),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
 };

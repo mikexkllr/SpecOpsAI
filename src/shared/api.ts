@@ -91,6 +91,20 @@ export interface SubAgentRunTaskRequest {
   autoComplete: boolean;
 }
 
+export interface GenerateUnitTestsRequest {
+  specPath: string;
+  story: TechnicalStory;
+  artifacts: ArtifactFiles;
+}
+
+export interface GenerateUnitTestsResult {
+  storyId: string;
+  path: string;
+  content: string;
+  summary: string;
+  error?: string;
+}
+
 export type ProviderId = "anthropic" | "openai" | "google" | "ollama";
 
 export interface ProviderConfig {
@@ -172,6 +186,9 @@ export interface SpecOpsApi {
   decomposeStory(request: SubAgentDecomposeRequest): Promise<SubAgentState>;
   subAgentChat(request: SubAgentChatRequest): Promise<SubAgentState>;
   runSubAgentTask(request: SubAgentRunTaskRequest): Promise<SubAgentState>;
+  generateUnitTests(
+    request: GenerateUnitTestsRequest,
+  ): Promise<GenerateUnitTestsResult>;
   updateTaskStatus(
     specPath: string,
     storyId: string,

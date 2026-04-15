@@ -4,6 +4,7 @@ import type {
   AgentTurnRequest,
   AppSettings,
   ArtifactFiles,
+  GenerateUnitTestsRequest,
   SubAgentChatRequest,
   SubAgentDecomposeRequest,
   SubAgentRunTaskRequest,
@@ -20,6 +21,7 @@ import {
 import { loadSettings, saveSettings } from "./settings";
 import {
   decomposeStory,
+  generateUnitTests,
   readSubAgents,
   resetSubAgent,
   runSubAgentTask,
@@ -98,6 +100,10 @@ function registerIpc(): void {
   );
   ipcMain.handle("subagent:reset", (_e, specPath: string, storyId: string) =>
     resetSubAgent(specPath, storyId),
+  );
+  ipcMain.handle(
+    "subagent:generate-unit-tests",
+    (_e, request: GenerateUnitTestsRequest) => generateUnitTests(request),
   );
 
   ipcMain.handle("settings:get", () => loadSettings());

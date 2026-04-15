@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentMode,
   ArtifactFiles,
+  GenerateUnitTestsResult,
   SubAgentState,
   SubAgentStore,
   TaskStatus,
@@ -53,7 +54,12 @@ export function ImplementationView({
   const [tab, setTab] = useState<Tab>("stories");
   const [selectedId, setSelectedId] = useState<string | null>(stories[0]?.id ?? null);
   const [store, setStore] = useState<SubAgentStore>({});
-  const [busy, setBusy] = useState<"decompose" | "chat" | "run" | null>(null);
+  const [busy, setBusy] = useState<"decompose" | "chat" | "run" | "tests" | null>(
+    null,
+  );
+  const [testsByStory, setTestsByStory] = useState<
+    Record<string, GenerateUnitTestsResult>
+  >({});
   const [draft, setDraft] = useState("");
   const [pendingApproval, setPendingApproval] = useState<{
     storyId: string;
@@ -116,6 +122,21 @@ export function ImplementationView({
       STATUS_NEXT[current],
     );
     setStore((s) => ({ ...s, [state.storyId]: state }));
+  }
+
+  async function generateTests(): Promise<void> {
+    if (!selectedStory || busy) return;
+    setBusy("tests");
+    try {
+      const res = await window.specops.generateUnitTests({
+        specPath,
+        story: selectedStory,
+        artifacts: toApiArtifacts(artifacts),
+      });
+      setTestsByStory((m) => ({ ...m, [res.storyId]: res }));
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function resetStory(): Promise<void> {
@@ -259,6 +280,8 @@ export function ImplementationView({
               onStop={stopRun}
               onApprove={approveTask}
               onReject={rejectTask}
+              onGenerateTests={generateTests}
+              tests={testsByStory[selectedStory.id] ?? null}
             />
           ) : (
             <div style={{ padding: 24, opacity: 0.6 }}>Select a story.</div>
@@ -394,12 +417,14 @@ function StoryWorkspace({
   onStop,
   onApprove,
   onReject,
+  onGenerateTests,
+  tests,
 }: {
   story: TechnicalStory;
   state: SubAgentState | null;
   draft: string;
   setDraft: (v: string) => void;
-  busy: "decompose" | "chat" | "run" | null;
+  busy: "decompose" | "chat" | "run" | "tests" | null;
   agentMode: AgentMode;
   pendingApproval: string | null;
   onDecompose: () => void;
@@ -410,6 +435,8 @@ function StoryWorkspace({
   onStop: () => void;
   onApprove: () => void;
   onReject: () => void;
+  onGenerateTests: () => void;
+  tests: GenerateUnitTestsResult | null;
 }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -492,6 +519,14 @@ function StoryWorkspace({
                 ? "Re-decompose"
                 : "Decompose"}
           </button>
+          <button
+            onClick={onGenerateTests}
+            disabled={busy !== null}
+            style={buttonStyle(busy === "tests")}
+            title="Generate unit tests from this story and save them in tests/unit/"
+          >
+            {busy === "tests" ? "Generating…" : "Generate tests"}
+          </button>
           {tasks.length > 0 && (
             <button
               onClick={onReset}
@@ -502,6 +537,51 @@ function StoryWorkspace({
             </button>
           )}
         </div>
+        {tests && (
+          <div
+            style={{
+              marginTop: 10,
+              padding: "8px 10px",
+              background: "#151a20",
+              border: tests.error ? "1px solid #a33" : "1px solid #2f855a",
+              borderRadius: 4,
+              fontSize: 12,
+            }}
+          >
+            {tests.error ? (
+              <div style={{ color: "#ff8080" }}>
+                Test generation failed: {tests.error}
+              </div>
+            ) : (
+              <>
+                <div style={{ opacity: 0.8 }}>
+                  Unit tests written to <code>{tests.path}</code>
+                </div>
+                {tests.summary && (
+                  <div style={{ marginTop: 4, opacity: 0.65 }}>{tests.summary}</div>
+                )}
+                {tests.content && (
+                  <pre
+                    style={{
+                      marginTop: 6,
+                      maxHeight: 180,
+                      overflow: "auto",
+                      background: "#0f1115",
+                      color: "#dce6f0",
+                      padding: 8,
+                      borderRadius: 3,
+                      fontSize: 11,
+                      lineHeight: 1.45,
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {tests.content}
+                  </pre>
+                )}
+              </>
+            )}
+          </div>
+        )}
         {pendingApproval && (
           <div
             style={{
@@ -608,7 +688,7 @@ function StoryWorkspace({
                 {m.text}
               </div>
             ))}
-            {(busy === "chat" || busy === "run") && (
+            {(busy === "chat" || busy === "run" || busy === "tests") && (
               <div
                 style={{
                   alignSelf: "flex-start",
@@ -620,7 +700,11 @@ function StoryWorkspace({
                   fontStyle: "italic",
                 }}
               >
-                {busy === "run" ? "Sub-agent working…" : "Thinking…"}
+                {busy === "run"
+                  ? "Sub-agent working…"
+                  : busy === "tests"
+                    ? "Generating unit tests…"
+                    : "Thinking…"}
               </div>
             )}
           </div>

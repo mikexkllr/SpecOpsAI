@@ -169,7 +169,7 @@
 - [x] Mode switch UI
 
 ### Testing System
-- [ ] Auto-generate Unit Tests from Technical Stories
+- [x] Auto-generate Unit Tests from Technical Stories
 - [ ] Auto-generate Integration Tests from User Stories
 - [ ] Playwright integration for web targets (e.g., React)
 - [ ] Flutter test integration for mobile

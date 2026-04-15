@@ -19,6 +19,8 @@ async function loadTools(): Promise<ToolsModule> {
 }
 import type {
   ArtifactFiles,
+  GenerateUnitTestsRequest,
+  GenerateUnitTestsResult,
   SubAgentChatRequest,
   SubAgentDecomposeRequest,
   SubAgentRunTaskRequest,
@@ -391,6 +393,94 @@ export async function updateTaskStatus(
   store[storyId] = next;
   await saveStore(specPath, store);
   return next;
+}
+
+function unitTestRelPath(storyId: string): string {
+  const safe = storyId.replace(/[^A-Za-z0-9._-]/g, "_");
+  return path.join("tests", "unit", `${safe}.test.md`);
+}
+
+function unitTestPrompt(
+  story: TechnicalStory,
+  tasks: TaskChunk[],
+  artifacts: ArtifactFiles,
+  testFile: string,
+): string {
+  const taskBlock = tasks.length
+    ? tasks.map((t) => `- ${t.id} ${t.title} — ${t.description}`).join("\n")
+    : "(no decomposed tasks — derive tests directly from the acceptance criteria)";
+  return [
+    "You are a test-authoring sub-agent for ONE Technical Story.",
+    "Generate a unit-test specification for the story and WRITE it to the file path below using your `write_file` tool.",
+    "Tests must be derived strictly from the story's acceptance criteria and decomposed tasks — one `it(...)` per observable behavior.",
+    "Include: a short preamble, `describe` blocks grouping behaviors, and concrete `it(...)` cases with Arrange/Act/Assert notes.",
+    "Prefer framework-agnostic pseudocode unless the artifacts clearly indicate a stack (Jest/Vitest/etc). Mark assumptions explicitly.",
+    "Do NOT invent requirements not grounded in the story or user stories.",
+    "",
+    `## Target file (use write_file to create or overwrite this exact path)\n${testFile}`,
+    "",
+    contextSections(artifacts),
+    "",
+    storySection(story),
+    "",
+    "## Decomposed tasks",
+    taskBlock,
+    "",
+    "After writing the file, reply with one or two sentences summarizing the tests you generated.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+export async function generateUnitTests(
+  req: GenerateUnitTestsRequest,
+): Promise<GenerateUnitTestsResult> {
+  const store = await loadStore(req.specPath);
+  const state = store[req.story.id];
+  const tasks = state?.tasks ?? [];
+  const relPath = unitTestRelPath(req.story.id);
+  const absPath = path.join(req.specPath, relPath);
+
+  try {
+    const cfg = await getActiveProvider();
+    const { createDeepAgent, FilesystemBackend } = await loadDeepagents();
+    const { HumanMessage } = await loadMessages();
+    const model = await buildChatModel(cfg);
+    const agent = createDeepAgent({
+      model,
+      systemPrompt: unitTestPrompt(req.story, tasks, req.artifacts, relPath),
+      backend: new FilesystemBackend({ rootDir: req.specPath }),
+    });
+    const result = await agent.invoke({
+      messages: [
+        new HumanMessage(
+          `Generate unit tests for ${req.story.id} and save them to ${relPath}.`,
+        ),
+      ],
+    });
+    const summary = lastAssistantText(result) || "(no summary)";
+    let content = "";
+    try {
+      content = await fs.readFile(absPath, "utf8");
+    } catch {
+      return {
+        storyId: req.story.id,
+        path: relPath,
+        content: "",
+        summary,
+        error: `Sub-agent did not write ${relPath}.`,
+      };
+    }
+    return { storyId: req.story.id, path: relPath, content, summary };
+  } catch (err) {
+    return {
+      storyId: req.story.id,
+      path: relPath,
+      content: "",
+      summary: "",
+      error: (err as Error).message,
+    };
+  }
 }
 
 export async function resetSubAgent(
