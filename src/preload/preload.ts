@@ -21,6 +21,8 @@ const api: SpecOpsApi = {
     ipcRenderer.invoke("subagent:reset", specPath, storyId),
   generateUnitTests: (request) =>
     ipcRenderer.invoke("subagent:generate-unit-tests", request),
+  generateIntegrationTests: (request) =>
+    ipcRenderer.invoke("subagent:generate-integration-tests", request),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
 };

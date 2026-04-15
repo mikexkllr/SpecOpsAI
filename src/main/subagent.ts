@@ -19,6 +19,8 @@ async function loadTools(): Promise<ToolsModule> {
 }
 import type {
   ArtifactFiles,
+  GenerateIntegrationTestsRequest,
+  GenerateIntegrationTestsResult,
   GenerateUnitTestsRequest,
   GenerateUnitTestsResult,
   SubAgentChatRequest,
@@ -29,6 +31,7 @@ import type {
   TaskChunk,
   TaskStatus,
   TechnicalStory,
+  UserStory,
 } from "../shared/api";
 import { buildChatModel } from "./models";
 import { getActiveProvider } from "./settings";
@@ -455,6 +458,117 @@ export async function generateUnitTests(
       messages: [
         new HumanMessage(
           `Generate unit tests for ${req.story.id} and save them to ${relPath}.`,
+        ),
+      ],
+    });
+    const summary = lastAssistantText(result) || "(no summary)";
+    let content = "";
+    try {
+      content = await fs.readFile(absPath, "utf8");
+    } catch {
+      return {
+        storyId: req.story.id,
+        path: relPath,
+        content: "",
+        summary,
+        error: `Sub-agent did not write ${relPath}.`,
+      };
+    }
+    return { storyId: req.story.id, path: relPath, content, summary };
+  } catch (err) {
+    return {
+      storyId: req.story.id,
+      path: relPath,
+      content: "",
+      summary: "",
+      error: (err as Error).message,
+    };
+  }
+}
+
+function integrationTestRelPath(storyId: string): string {
+  const safe = storyId.replace(/[^A-Za-z0-9._-]/g, "_");
+  return path.join("tests", "integration", `${safe}.test.md`);
+}
+
+function detectTargetStackHint(artifacts: ArtifactFiles): string {
+  const blob = `${artifacts.spec}\n${artifacts.userStories}\n${artifacts.technicalStories}`.toLowerCase();
+  const hints: string[] = [];
+  if (/\breact\b|\bnext\.js\b|\bvue\b|\bsvelte\b|web app|browser/.test(blob)) {
+    hints.push("Web target detected — prefer Playwright for end-to-end browser flows.");
+  }
+  if (/\bflutter\b/.test(blob)) {
+    hints.push("Flutter target detected — use `flutter test integration_test/` patterns.");
+  }
+  if (/\bios\b|swift|xcode|xcuitest/.test(blob)) {
+    hints.push("iOS target detected — use XCUITest patterns.");
+  }
+  if (/\bandroid\b|kotlin|espresso/.test(blob)) {
+    hints.push("Android target detected — use Espresso / UI Automator patterns.");
+  }
+  if (hints.length === 0) {
+    hints.push(
+      "No explicit target stack detected — write framework-agnostic Given/When/Then scenarios and flag the assumed stack.",
+    );
+  }
+  return hints.join("\n");
+}
+
+function userStorySection(story: UserStory): string {
+  return [
+    "## This User Story",
+    `### ${story.id}: ${story.title}`,
+    story.body || "(no body)",
+  ].join("\n\n");
+}
+
+function integrationTestPrompt(
+  story: UserStory,
+  artifacts: ArtifactFiles,
+  testFile: string,
+): string {
+  return [
+    "You are a test-authoring sub-agent generating INTEGRATION / end-to-end tests for ONE User Story.",
+    "Write the test specification to the file path below using your `write_file` tool.",
+    "Integration tests must exercise the user-visible flow end to end — not internal units.",
+    "Structure each scenario as Given / When / Then and tie it to an acceptance criterion of the story.",
+    "Cover the happy path plus the most important failure / edge cases the story implies.",
+    "",
+    "## Target framework guidance",
+    detectTargetStackHint(artifacts),
+    "",
+    `## Target file (use write_file to create or overwrite this exact path)\n${testFile}`,
+    "",
+    contextSections(artifacts),
+    "",
+    userStorySection(story),
+    "",
+    "After writing the file, reply with one or two sentences summarizing the scenarios you generated.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+export async function generateIntegrationTests(
+  req: GenerateIntegrationTestsRequest,
+): Promise<GenerateIntegrationTestsResult> {
+  const relPath = integrationTestRelPath(req.story.id);
+  const absPath = path.join(req.specPath, relPath);
+
+  try {
+    const cfg = await getActiveProvider();
+    const { createDeepAgent, FilesystemBackend } = await loadDeepagents();
+    const { HumanMessage } = await loadMessages();
+    const model = await buildChatModel(cfg);
+    const agent = createDeepAgent({
+      model,
+      systemPrompt: integrationTestPrompt(req.story, req.artifacts, relPath),
+      backend: new FilesystemBackend({ rootDir: req.specPath }),
+    });
+    const result = await agent.invoke({
+      messages: [
+        new HumanMessage(
+          `Generate integration tests for ${req.story.id} and save them to ${relPath}.`,
         ),
       ],
     });

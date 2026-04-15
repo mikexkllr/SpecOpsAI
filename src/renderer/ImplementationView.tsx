@@ -2,14 +2,17 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentMode,
   ArtifactFiles,
+  GenerateIntegrationTestsResult,
   GenerateUnitTestsResult,
   SubAgentState,
   SubAgentStore,
   TaskStatus,
   TechnicalStory,
+  UserStory,
 } from "../shared/api";
 import type { Artifacts } from "./phases";
 import { parseTechnicalStories } from "./technical-stories";
+import { parseUserStories } from "./user-stories";
 
 interface ImplementationViewProps {
   specPath: string;
@@ -18,7 +21,7 @@ interface ImplementationViewProps {
   onCodeChange: (code: string) => void;
 }
 
-type Tab = "stories" | "code";
+type Tab = "stories" | "integration" | "code";
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   pending: "Pending",
@@ -51,6 +54,10 @@ export function ImplementationView({
     () => parseTechnicalStories(artifacts.technicalStories),
     [artifacts.technicalStories],
   );
+  const userStories = useMemo(
+    () => parseUserStories(artifacts.userStories),
+    [artifacts.userStories],
+  );
   const [tab, setTab] = useState<Tab>("stories");
   const [selectedId, setSelectedId] = useState<string | null>(stories[0]?.id ?? null);
   const [store, setStore] = useState<SubAgentStore>({});
@@ -60,6 +67,10 @@ export function ImplementationView({
   const [testsByStory, setTestsByStory] = useState<
     Record<string, GenerateUnitTestsResult>
   >({});
+  const [integrationByStory, setIntegrationByStory] = useState<
+    Record<string, GenerateIntegrationTestsResult>
+  >({});
+  const [integrationBusy, setIntegrationBusy] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [pendingApproval, setPendingApproval] = useState<{
     storyId: string;
@@ -136,6 +147,21 @@ export function ImplementationView({
       setTestsByStory((m) => ({ ...m, [res.storyId]: res }));
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function generateIntegrationFor(story: UserStory): Promise<void> {
+    if (integrationBusy) return;
+    setIntegrationBusy(story.id);
+    try {
+      const res = await window.specops.generateIntegrationTests({
+        specPath,
+        story,
+        artifacts: toApiArtifacts(artifacts),
+      });
+      setIntegrationByStory((m) => ({ ...m, [res.storyId]: res }));
+    } finally {
+      setIntegrationBusy(null);
     }
   }
 
@@ -246,6 +272,20 @@ export function ImplementationView({
     );
   }
 
+  if (tab === "integration") {
+    return (
+      <div style={layoutStyle}>
+        <Tabs tab={tab} onChange={setTab} />
+        <IntegrationTestsPanel
+          userStories={userStories}
+          results={integrationByStory}
+          busyId={integrationBusy}
+          onGenerate={generateIntegrationFor}
+        />
+      </div>
+    );
+  }
+
   return (
     <div style={layoutStyle}>
       <Tabs tab={tab} onChange={setTab} />
@@ -303,6 +343,7 @@ const layoutStyle: React.CSSProperties = {
 function Tabs({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }): JSX.Element {
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: "stories", label: "Sub-agents" },
+    { id: "integration", label: "Integration tests" },
     { id: "code", label: "Code notes" },
   ];
   return (
@@ -780,4 +821,141 @@ function statusColor(status: TaskStatus): string {
     case "done":
       return "#2f855a";
   }
+}
+
+function IntegrationTestsPanel({
+  userStories,
+  results,
+  busyId,
+  onGenerate,
+}: {
+  userStories: UserStory[];
+  results: Record<string, GenerateIntegrationTestsResult>;
+  busyId: string | null;
+  onGenerate: (story: UserStory) => void;
+}): JSX.Element {
+  if (userStories.length === 0) {
+    return (
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          opacity: 0.6,
+          fontSize: 14,
+          padding: 24,
+          textAlign: "center",
+        }}
+      >
+        No User Stories detected. Go back to the User Stories phase and add some
+        (headings like `## US-1: …` or bullets starting with `As a …`).
+      </div>
+    );
+  }
+  return (
+    <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+      <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 10 }}>
+        Integration tests are derived from User Stories and saved under
+        <code> tests/integration/</code>. The sub-agent picks an appropriate stack
+        (Playwright, Flutter, XCUITest, Espresso) from your spec or writes
+        framework-agnostic Given/When/Then scenarios.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {userStories.map((story) => {
+          const res = results[story.id] ?? null;
+          const busy = busyId === story.id;
+          return (
+            <div
+              key={story.id}
+              style={{
+                padding: "10px 12px",
+                background: "#151515",
+                border: "1px solid #2a2a2a",
+                borderRadius: 6,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, opacity: 0.65 }}>{story.id}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>
+                    {story.title || "(untitled)"}
+                  </div>
+                </div>
+                <button
+                  onClick={() => onGenerate(story)}
+                  disabled={busyId !== null}
+                  style={buttonStyle(busy)}
+                  title="Generate integration tests for this story"
+                >
+                  {busy ? "Generating…" : res ? "Regenerate" : "Generate"}
+                </button>
+              </div>
+              {story.body && (
+                <div
+                  style={{
+                    marginTop: 6,
+                    fontSize: 12,
+                    opacity: 0.7,
+                    whiteSpace: "pre-wrap",
+                    maxHeight: 90,
+                    overflowY: "auto",
+                  }}
+                >
+                  {story.body}
+                </div>
+              )}
+              {res && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: "8px 10px",
+                    background: "#0f1115",
+                    border: res.error ? "1px solid #a33" : "1px solid #2f855a",
+                    borderRadius: 4,
+                    fontSize: 12,
+                  }}
+                >
+                  {res.error ? (
+                    <div style={{ color: "#ff8080" }}>
+                      Integration test generation failed: {res.error}
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ opacity: 0.8 }}>
+                        Written to <code>{res.path}</code>
+                      </div>
+                      {res.summary && (
+                        <div style={{ marginTop: 4, opacity: 0.65 }}>
+                          {res.summary}
+                        </div>
+                      )}
+                      {res.content && (
+                        <pre
+                          style={{
+                            marginTop: 6,
+                            maxHeight: 240,
+                            overflow: "auto",
+                            background: "#0a0b0f",
+                            color: "#dce6f0",
+                            padding: 8,
+                            borderRadius: 3,
+                            fontSize: 11,
+                            lineHeight: 1.45,
+                            whiteSpace: "pre-wrap",
+                          }}
+                        >
+                          {res.content}
+                        </pre>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }

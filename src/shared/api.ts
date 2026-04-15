@@ -105,6 +105,26 @@ export interface GenerateUnitTestsResult {
   error?: string;
 }
 
+export interface UserStory {
+  id: string;
+  title: string;
+  body: string;
+}
+
+export interface GenerateIntegrationTestsRequest {
+  specPath: string;
+  story: UserStory;
+  artifacts: ArtifactFiles;
+}
+
+export interface GenerateIntegrationTestsResult {
+  storyId: string;
+  path: string;
+  content: string;
+  summary: string;
+  error?: string;
+}
+
 export type ProviderId = "anthropic" | "openai" | "google" | "ollama";
 
 export interface ProviderConfig {
@@ -189,6 +209,9 @@ export interface SpecOpsApi {
   generateUnitTests(
     request: GenerateUnitTestsRequest,
   ): Promise<GenerateUnitTestsResult>;
+  generateIntegrationTests(
+    request: GenerateIntegrationTestsRequest,
+  ): Promise<GenerateIntegrationTestsResult>;
   updateTaskStatus(
     specPath: string,
     storyId: string,
