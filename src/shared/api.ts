@@ -91,7 +91,7 @@ export interface SubAgentRunTaskRequest {
   autoComplete: boolean;
 }
 
-export type ProviderId = "anthropic" | "openai" | "google" | "ollama" | "openswe";
+export type ProviderId = "anthropic" | "openai" | "google" | "ollama";
 
 export interface ProviderConfig {
   id: ProviderId;
@@ -153,16 +153,6 @@ export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
     defaultModel: "llama3.1",
     suggestedModels: ["llama3.1", "qwen2.5-coder", "mistral"],
     description: "Local models via Ollama.",
-  },
-  {
-    id: "openswe",
-    label: "LangChain Open SWE",
-    needsApiKey: true,
-    defaultBaseUrl: "http://localhost:2024",
-    defaultModel: "open-swe",
-    suggestedModels: ["open-swe"],
-    description:
-      "LangGraph-served Open SWE agent. Intended for the Implementation phase.",
   },
 ];
 

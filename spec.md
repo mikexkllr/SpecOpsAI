@@ -1,6 +1,6 @@
 **Final, precise prompt:**
 
-> Design a desktop application with an integrated AI agent based on Open SWE by the LangChain team.
+> Design a desktop application with an integrated AI agent harness based on deepagents (LangChain).
 > The application should consistently implement **Spec-Driven Development** and provide a **phase-based development environment (IDE)**.
 >
 > ## Core Idea: Phase-Based UI (Progressive Disclosure)
@@ -138,7 +138,7 @@
 ### Foundation
 - [x] Choose desktop framework (Electron, Tauri, or similar) — **Electron**
 - [x] Set up project scaffolding and build pipeline
-- [x] Integrate Open SWE (LangChain) as the agent backbone — MVP: pluggable agent in main process with Anthropic backend; Open SWE slots in for Implementation phase later
+- [x] Integrate **deepagents** (LangChain agent harness) as the single agent backbone for every chat and sub-agent
 - [x] Implement chat interface as primary control mechanism
 - [x] Implement Git integration (auto-branch on project start)
 - [x] Define repository folder structure (one folder per Spec)
@@ -160,6 +160,8 @@
 - [x] Derive Technical Stories from User Stories
 - [x] Task decomposition (chunking) per Technical Story
 - [x] Spawn dedicated sub-agent with isolated context window per Technical Story
+- [x] Drive decomposition via deepagent tool-call (emit_tasks) instead of JSON regex
+- [x] Sub-agents have real filesystem tools (read_file/write_file/edit_file/ls/glob/grep) via deepagents
 
 ### Agent Modes
 - [x] Implement YOLO Mode (fully autonomous, unattended runs)
@@ -173,7 +175,7 @@
 - [ ] Flutter test integration for mobile
 - [ ] iOS test integration
 - [ ] Android test integration
-- [ ] Continuous autonomous test loop runner
+- [ ] Continuous autonomous test loop runner (via deepagents task tool)
 - [ ] Agent decision logic: fix code vs. correct test
 - [ ] End-to-end test coverage aligned with User Stories
 

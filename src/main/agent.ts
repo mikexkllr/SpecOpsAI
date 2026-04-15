@@ -1,12 +1,24 @@
+import type * as DeepAgents from "deepagents";
+import type { BaseMessage } from "@langchain/core/messages";
+import type { StructuredToolInterface } from "@langchain/core/tools";
+
+async function loadDeepagents(): Promise<typeof DeepAgents> {
+  return await (Function('return import("deepagents")')() as Promise<typeof DeepAgents>);
+}
+
+type MessagesModule = typeof import("@langchain/core/messages");
+async function loadMessages(): Promise<MessagesModule> {
+  return await (Function('return import("@langchain/core/messages")')() as Promise<MessagesModule>);
+}
 import type {
   AgentTurn,
   AgentTurnRequest,
   AgentTurnResult,
   ArtifactFiles,
   Phase,
-  ProviderConfig,
 } from "../shared/api";
 import { getActiveProvider } from "./settings";
+import { buildChatModel } from "./models";
 
 interface PhaseConfig {
   artifact: keyof ArtifactFiles;
@@ -48,7 +60,7 @@ const PHASE_CONFIG: Record<Phase, PhaseConfig> = {
     label: "Implementation",
     guidance: [
       "This phase implements the technical stories. Return code or scaffolding notes.",
-      "Open SWE will drive real code changes later — for now, sketch the implementation plan.",
+      "Sketch the implementation plan; the sub-agents will do the detailed per-story work.",
     ].join(" "),
   },
 };
@@ -100,6 +112,13 @@ function parseResponse(text: string): { artifact?: string; reply: string } {
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
+async function toLcMessages(messages: ChatMessage[]): Promise<BaseMessage[]> {
+  const { HumanMessage, AIMessage } = await loadMessages();
+  return messages.map((m) =>
+    m.role === "user" ? new HumanMessage(m.content) : new AIMessage(m.content),
+  );
+}
+
 function toMessages(history: AgentTurn[], userMessage: string): ChatMessage[] {
   const msgs: ChatMessage[] = history.map((m) => ({
     role: m.role === "user" ? "user" : "assistant",
@@ -109,173 +128,60 @@ function toMessages(history: AgentTurn[], userMessage: string): ChatMessage[] {
   return msgs;
 }
 
-async function callAnthropic(
-  cfg: ProviderConfig,
-  system: string,
-  messages: ChatMessage[],
-): Promise<string> {
-  if (!cfg.apiKey) throw new Error("Anthropic API key is not set. Configure it in Settings.");
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": cfg.apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({ model: cfg.model, max_tokens: 4096, system, messages }),
-  });
-  if (!res.ok) throw new Error(`Anthropic ${res.status}: ${(await res.text()).slice(0, 500)}`);
-  const data = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
-  return (
-    data.content
-      ?.map((b) => (b.type === "text" ? b.text ?? "" : ""))
-      .join("")
-      .trim() ?? ""
-  );
-}
-
-async function callOpenAI(
-  cfg: ProviderConfig,
-  system: string,
-  messages: ChatMessage[],
-): Promise<string> {
-  if (!cfg.apiKey) throw new Error("OpenAI API key is not set. Configure it in Settings.");
-  const base = cfg.baseUrl?.replace(/\/$/, "") || "https://api.openai.com/v1";
-  const res = await fetch(`${base}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${cfg.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: cfg.model,
-      messages: [{ role: "system", content: system }, ...messages],
-    }),
-  });
-  if (!res.ok) throw new Error(`OpenAI ${res.status}: ${(await res.text()).slice(0, 500)}`);
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  return data.choices?.[0]?.message?.content?.trim() ?? "";
-}
-
-async function callGoogle(
-  cfg: ProviderConfig,
-  system: string,
-  messages: ChatMessage[],
-): Promise<string> {
-  if (!cfg.apiKey) throw new Error("Google API key is not set. Configure it in Settings.");
-  const base = cfg.baseUrl?.replace(/\/$/, "") || "https://generativelanguage.googleapis.com/v1beta";
-  const url = `${base}/models/${encodeURIComponent(cfg.model)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
-  const contents = messages.map((m) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: m.content }],
-  }));
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: system }] },
-      contents,
-    }),
-  });
-  if (!res.ok) throw new Error(`Google ${res.status}: ${(await res.text()).slice(0, 500)}`);
-  const data = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  return (
-    data.candidates?.[0]?.content?.parts
-      ?.map((p) => p.text ?? "")
-      .join("")
-      .trim() ?? ""
-  );
-}
-
-async function callOllama(
-  cfg: ProviderConfig,
-  system: string,
-  messages: ChatMessage[],
-): Promise<string> {
-  const base = cfg.baseUrl?.replace(/\/$/, "") || "http://localhost:11434";
-  const res = await fetch(`${base}/api/chat`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      model: cfg.model,
-      stream: false,
-      messages: [{ role: "system", content: system }, ...messages],
-    }),
-  });
-  if (!res.ok) throw new Error(`Ollama ${res.status}: ${(await res.text()).slice(0, 500)}`);
-  const data = (await res.json()) as { message?: { content?: string } };
-  return data.message?.content?.trim() ?? "";
-}
-
-async function callOpenSwe(
-  cfg: ProviderConfig,
-  system: string,
-  messages: ChatMessage[],
-): Promise<string> {
-  if (!cfg.baseUrl) throw new Error("Open SWE base URL is not set. Configure it in Settings.");
-  const base = cfg.baseUrl.replace(/\/$/, "");
-  const res = await fetch(`${base}/runs/wait`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(cfg.apiKey ? { "x-api-key": cfg.apiKey } : {}),
-    },
-    body: JSON.stringify({
-      assistant_id: cfg.model || "open-swe",
-      input: { system, messages },
-    }),
-  });
-  if (!res.ok)
-    throw new Error(`Open SWE ${res.status}: ${(await res.text()).slice(0, 500)}`);
-  const data = (await res.json()) as {
-    output?: string;
-    messages?: Array<{ content?: string }>;
-  };
-  if (typeof data.output === "string") return data.output.trim();
-  const last = data.messages?.[data.messages.length - 1]?.content;
-  return typeof last === "string" ? last.trim() : "";
-}
-
-async function dispatch(
-  cfg: ProviderConfig,
-  system: string,
-  messages: ChatMessage[],
-): Promise<string> {
-  switch (cfg.id) {
-    case "anthropic":
-      return callAnthropic(cfg, system, messages);
-    case "openai":
-      return callOpenAI(cfg, system, messages);
-    case "google":
-      return callGoogle(cfg, system, messages);
-    case "ollama":
-      return callOllama(cfg, system, messages);
-    case "openswe":
-      return callOpenSwe(cfg, system, messages);
+function lastAssistantText(result: unknown): string {
+  const r = result as { messages?: BaseMessage[] };
+  const msgs = r?.messages ?? [];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    const type = (m as { _getType?: () => string })._getType?.() ?? (m as { type?: string }).type;
+    if (type === "ai" || type === "AIMessage") {
+      const content = (m as BaseMessage).content;
+      if (typeof content === "string") return content.trim();
+      if (Array.isArray(content)) {
+        return content
+          .map((c) => (typeof c === "string" ? c : (c as { text?: string }).text ?? ""))
+          .join("")
+          .trim();
+      }
+    }
   }
+  return "";
 }
 
-export async function callProvider(
+export interface InvokeOptions {
+  tools?: StructuredToolInterface[];
+  recursionLimit?: number;
+}
+
+export async function invokeDeepAgent(
   system: string,
   messages: ChatMessage[],
+  opts: InvokeOptions = {},
 ): Promise<string> {
   const cfg = await getActiveProvider();
-  return dispatch(cfg, system, messages);
+  const model = await buildChatModel(cfg);
+  const { createDeepAgent } = await loadDeepagents();
+  const lcMessages = await toLcMessages(messages);
+  const agent = createDeepAgent({
+    model,
+    systemPrompt: system,
+    tools: (opts.tools ?? []) as StructuredToolInterface[],
+  });
+  const result = await agent.invoke(
+    { messages: lcMessages },
+    opts.recursionLimit ? { recursionLimit: opts.recursionLimit } : undefined,
+  );
+  return lastAssistantText(result);
 }
 
 export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurnResult> {
-  const cfg = await getActiveProvider();
   const phaseCfg = PHASE_CONFIG[req.phase];
   const system = buildSystemPrompt(req.phase, req.artifacts);
   const messages = toMessages(req.history, req.message);
 
   let text: string;
   try {
-    text = await dispatch(cfg, system, messages);
+    text = await invokeDeepAgent(system, messages);
   } catch (err) {
     return { reply: `Agent error: ${(err as Error).message}` };
   }

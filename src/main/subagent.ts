@@ -1,5 +1,22 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import type * as DeepAgents from "deepagents";
+import type { BaseMessage } from "@langchain/core/messages";
+import { z } from "zod";
+
+async function loadDeepagents(): Promise<typeof DeepAgents> {
+  return await (Function('return import("deepagents")')() as Promise<typeof DeepAgents>);
+}
+
+type MessagesModule = typeof import("@langchain/core/messages");
+async function loadMessages(): Promise<MessagesModule> {
+  return await (Function('return import("@langchain/core/messages")')() as Promise<MessagesModule>);
+}
+
+type ToolsModule = typeof import("@langchain/core/tools");
+async function loadTools(): Promise<ToolsModule> {
+  return await (Function('return import("@langchain/core/tools")')() as Promise<ToolsModule>);
+}
 import type {
   ArtifactFiles,
   SubAgentChatRequest,
@@ -11,9 +28,12 @@ import type {
   TaskStatus,
   TechnicalStory,
 } from "../shared/api";
-import { callProvider, type ChatMessage } from "./agent";
+import { buildChatModel } from "./models";
+import { getActiveProvider } from "./settings";
 
 const STORE_FILE = path.join(".specops", "subagents.json");
+
+type ChatMsg = { role: "user" | "assistant"; content: string };
 
 async function loadStore(specPath: string): Promise<SubAgentStore> {
   try {
@@ -57,10 +77,9 @@ function decompositionPrompt(
 ): string {
   return [
     "You decompose one Technical Story into the smallest useful implementation chunks.",
-    "Return ONLY a JSON array — no prose, no code fences — of 2 to 8 objects with this exact shape:",
-    `[{"id":"${story.id}.1","title":"short imperative","description":"1-2 sentences with acceptance criteria"}]`,
+    "Call the `emit_tasks` tool exactly once with 2–8 task objects. Do not reply in prose.",
     "Each chunk must be independently implementable in under ~30 minutes.",
-    "Use the story id as prefix for chunk ids.",
+    "Use the story id as prefix for chunk ids (e.g. " + story.id + ".1).",
     "",
     contextSections(artifacts),
     "",
@@ -70,34 +89,31 @@ function decompositionPrompt(
     .join("\n\n");
 }
 
-function normalizeTasks(raw: unknown, storyId: string): TaskChunk[] {
-  if (!Array.isArray(raw)) return [];
-  const tasks: TaskChunk[] = [];
-  raw.forEach((item, i) => {
-    if (!item || typeof item !== "object") return;
-    const r = item as Record<string, unknown>;
-    const id =
-      typeof r.id === "string" && r.id.trim() ? r.id.trim() : `${storyId}.${i + 1}`;
-    const title =
-      typeof r.title === "string" && r.title.trim()
-        ? r.title.trim()
-        : `Task ${i + 1}`;
-    const description =
-      typeof r.description === "string" ? r.description.trim() : "";
-    tasks.push({ id, title, description, status: "pending" });
-  });
-  return tasks;
+async function toLcMessages(messages: ChatMsg[]): Promise<BaseMessage[]> {
+  const { HumanMessage, AIMessage } = await loadMessages();
+  return messages.map((m) =>
+    m.role === "user" ? new HumanMessage(m.content) : new AIMessage(m.content),
+  );
 }
 
-function extractJsonArray(text: string): unknown {
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-  if (start === -1 || end === -1 || end <= start) return null;
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return null;
+function lastAssistantText(result: unknown): string {
+  const r = result as { messages?: BaseMessage[] };
+  const msgs = r?.messages ?? [];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    const type = (m as { _getType?: () => string })._getType?.() ?? (m as { type?: string }).type;
+    if (type === "ai" || type === "AIMessage") {
+      const content = (m as BaseMessage).content;
+      if (typeof content === "string") return content.trim();
+      if (Array.isArray(content)) {
+        return content
+          .map((c) => (typeof c === "string" ? c : (c as { text?: string }).text ?? ""))
+          .join("")
+          .trim();
+      }
+    }
   }
+  return "";
 }
 
 export async function readSubAgents(specPath: string): Promise<SubAgentStore> {
@@ -114,13 +130,53 @@ export async function decomposeStory(
   await saveStore(req.specPath, store);
 
   try {
-    const system = decompositionPrompt(req.story, req.artifacts);
-    const text = await callProvider(system, [
-      { role: "user", content: "Decompose the story now." },
-    ]);
-    const parsed = extractJsonArray(text);
-    const tasks = normalizeTasks(parsed, req.story.id);
-    if (tasks.length === 0) throw new Error("No tasks extracted from model output.");
+    let captured: Array<{ id: string; title: string; description: string }> | null = null;
+    const { tool } = await loadTools();
+    const { HumanMessage } = await loadMessages();
+    const emitTasks = tool(
+      async (input: { tasks: Array<{ id: string; title: string; description: string }> }) => {
+        captured = input.tasks;
+        return `Captured ${input.tasks.length} tasks.`;
+      },
+      {
+        name: "emit_tasks",
+        description: "Emit the decomposed task chunks for this Technical Story.",
+        schema: z.object({
+          tasks: z
+            .array(
+              z.object({
+                id: z.string(),
+                title: z.string(),
+                description: z.string(),
+              }),
+            )
+            .min(2)
+            .max(8),
+        }),
+      },
+    );
+
+    const cfg = await getActiveProvider();
+    const { createDeepAgent } = await loadDeepagents();
+    const agent = createDeepAgent({
+      model: await buildChatModel(cfg),
+      systemPrompt: decompositionPrompt(req.story, req.artifacts),
+      tools: [emitTasks],
+    });
+    await agent.invoke({
+      messages: [new HumanMessage("Decompose the story now by calling emit_tasks.")],
+    });
+
+    const emitted = captured as Array<{ id: string; title: string; description: string }> | null;
+    if (!emitted || emitted.length === 0) {
+      throw new Error("Agent did not call emit_tasks.");
+    }
+    const tasks: TaskChunk[] = emitted.map((t, i) => ({
+      id: t.id?.trim() || `${req.story.id}.${i + 1}`,
+      title: t.title?.trim() || `Task ${i + 1}`,
+      description: t.description?.trim() || "",
+      status: "pending",
+    }));
     const existing = new Map(prev.tasks.map((t) => [t.id, t.status]));
     const merged = tasks.map((t) => ({ ...t, status: existing.get(t.id) ?? "pending" }));
     const next: SubAgentState = {
@@ -157,6 +213,7 @@ function chatSystemPrompt(
   return [
     "You are a SUB-AGENT scoped to a single Technical Story.",
     "Your context is isolated: do not discuss other stories. Keep responses concise and actionable.",
+    "You have filesystem tools (ls, read_file, write_file, edit_file, glob, grep) rooted at this spec's working directory.",
     "Help implement the tasks below: propose code, ask targeted questions, flag blockers.",
     "",
     contextSections(artifacts),
@@ -168,6 +225,25 @@ function chatSystemPrompt(
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+async function runStorySubAgent(
+  specPath: string,
+  system: string,
+  history: ChatMsg[],
+  userMessage: string,
+): Promise<string> {
+  const cfg = await getActiveProvider();
+  const { createDeepAgent, FilesystemBackend } = await loadDeepagents();
+  const model = await buildChatModel(cfg);
+  const lcMessages = await toLcMessages([...history, { role: "user", content: userMessage }]);
+  const agent = createDeepAgent({
+    model,
+    systemPrompt: system,
+    backend: new FilesystemBackend({ rootDir: specPath }),
+  });
+  const result = await agent.invoke({ messages: lcMessages });
+  return lastAssistantText(result) || "(no reply)";
 }
 
 export async function subAgentChat(
@@ -187,14 +263,11 @@ export async function subAgentChat(
 
   try {
     const system = chatSystemPrompt(req.story, prev.tasks, req.artifacts);
-    const messages: ChatMessage[] = [
-      ...prev.messages.map<ChatMessage>((m) => ({
-        role: m.role === "user" ? "user" : "assistant",
-        content: m.text,
-      })),
-      { role: "user", content: req.message },
-    ];
-    const reply = (await callProvider(system, messages)).trim() || "(no reply)";
+    const history: ChatMsg[] = prev.messages.map((m) => ({
+      role: m.role === "user" ? "user" : "assistant",
+      content: m.text,
+    }));
+    const reply = await runStorySubAgent(req.specPath, system, history, req.message);
     const next: SubAgentState = {
       ...working,
       messages: [...working.messages, { role: "agent", text: reply }],
@@ -223,7 +296,8 @@ function taskPrompt(task: TaskChunk, story: TechnicalStory): string {
   return [
     `Work on task ${task.id} — "${task.title}" — of story ${story.id}.`,
     task.description ? `Acceptance: ${task.description}` : "",
-    "Produce a concrete, reviewable implementation proposal (code diff outline, files to touch, edge cases).",
+    "Use your filesystem tools to inspect and edit files as needed.",
+    "Produce a concrete, reviewable implementation proposal (code diff outline, files touched, edge cases).",
     "Keep the response focused on THIS task only.",
   ]
     .filter(Boolean)
@@ -246,7 +320,8 @@ export async function runSubAgentTask(
   const inProgressTasks = prev.tasks.map((t) =>
     t.id === task.id ? { ...t, status: "in-progress" as TaskStatus } : t,
   );
-  const userTurn = { role: "user" as const, text: taskPrompt(task, req.story) };
+  const userTurnText = taskPrompt(task, req.story);
+  const userTurn = { role: "user" as const, text: userTurnText };
   const working: SubAgentState = {
     ...prev,
     tasks: inProgressTasks,
@@ -259,14 +334,11 @@ export async function runSubAgentTask(
 
   try {
     const system = chatSystemPrompt(req.story, inProgressTasks, req.artifacts);
-    const messages: ChatMessage[] = [
-      ...prev.messages.map<ChatMessage>((m) => ({
-        role: m.role === "user" ? "user" : "assistant",
-        content: m.text,
-      })),
-      { role: "user", content: userTurn.text },
-    ];
-    const reply = (await callProvider(system, messages)).trim() || "(no reply)";
+    const history: ChatMsg[] = prev.messages.map((m) => ({
+      role: m.role === "user" ? "user" : "assistant",
+      content: m.text,
+    }));
+    const reply = await runStorySubAgent(req.specPath, system, history, userTurnText);
     const finalTasks = req.autoComplete
       ? inProgressTasks.map((t) =>
           t.id === task.id ? { ...t, status: "done" as TaskStatus } : t,

@@ -207,7 +207,7 @@ export function ImplementationView({
         <textarea
           value={artifacts.code}
           onChange={(e) => onCodeChange(e.target.value)}
-          placeholder="// code notes — Open SWE will drive real edits later"
+          placeholder="// code notes — implementation agent will drive real edits"
           style={{
             flex: 1,
             background: "#141414",
