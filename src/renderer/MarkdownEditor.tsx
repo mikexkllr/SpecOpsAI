@@ -11,20 +11,21 @@ interface MarkdownEditorProps {
 
 export function MarkdownEditor({ value, onChange, placeholder }: MarkdownEditorProps): JSX.Element {
   return (
-    <div className="custom-markdown-editor" style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+    <div className="custom-markdown-editor" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
       <MdEditor
         value={value}
         style={{ flex: 1, border: "none" }}
         renderHTML={(text) => marked.parse(text) as string}
         onChange={({ text }) => onChange(text)}
         placeholder={placeholder}
-        view={{ menu: true, md: true, html: false }} // Default view
+        view={{ menu: true, md: false, html: true }} // Default to preview (graphical)
         canView={{ menu: true, md: true, html: true, both: true, fullScreen: true, hideMenu: true }}
       />
       <style>{`
         .custom-markdown-editor .rc-md-editor {
           background: #141414;
           border: none !important;
+          font-family: inherit;
         }
         .custom-markdown-editor .rc-md-navigation {
           background: #1e1e1e;
@@ -43,17 +44,19 @@ export function MarkdownEditor({ value, onChange, placeholder }: MarkdownEditorP
         }
         .custom-markdown-editor .editor-container .section.md textarea {
           background: #141414 !important;
-          color: #e6e6e6 !important;
+          color: #ffffff !important;
           caret-color: #fff;
-          font-family: inherit;
+          font-family: ui-monospace, Menlo, monospace;
           font-size: 13px;
+          padding: 16px;
         }
         .custom-markdown-editor .editor-container .section.html .custom-html-style {
-          color: #e6e6e6 !important;
+          color: #ffffff !important;
           padding: 24px 32px;
           overflow: auto;
           line-height: 1.6;
           font-family: system-ui, -apple-system, sans-serif;
+          background: #141414;
         }
         .custom-markdown-editor .editor-container .section.html .custom-html-style h1,
         .custom-markdown-editor .editor-container .section.html .custom-html-style h2,
@@ -78,6 +81,7 @@ export function MarkdownEditor({ value, onChange, placeholder }: MarkdownEditorP
           border-radius: 4px;
           font-family: ui-monospace, Menlo, monospace;
           font-size: 85%;
+          color: #fff;
         }
         .custom-markdown-editor .editor-container .section.html .custom-html-style pre {
           background: #1e1e1e;
@@ -89,11 +93,16 @@ export function MarkdownEditor({ value, onChange, placeholder }: MarkdownEditorP
         .custom-markdown-editor .editor-container .section.html .custom-html-style blockquote {
           border-left: 4px solid #333;
           padding-left: 16px;
-          color: #999;
+          color: #ccc;
           margin: 0 0 16px 0;
         }
         .custom-markdown-editor .rc-md-navigation .button.active {
-            color: #2b6cb0;
+            color: #4dabf7;
+        }
+        /* Fix for potential outer scrolling: ensure editor internal sections scroll correctly */
+        .custom-markdown-editor .editor-container .section {
+          height: 100%;
+          overflow: hidden;
         }
       `}</style>
     </div>
