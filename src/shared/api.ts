@@ -117,7 +117,12 @@ export interface GenerateIntegrationTestsRequest {
   artifacts: ArtifactFiles;
 }
 
-export type IntegrationTestFramework = "playwright" | "generic";
+export type IntegrationTestFramework =
+  | "playwright"
+  | "flutter"
+  | "xcuitest"
+  | "espresso"
+  | "generic";
 
 export interface GenerateIntegrationTestsResult {
   storyId: string;
@@ -167,6 +172,25 @@ export interface TestLoopRequest {
   specPath: string;
   artifacts: ArtifactFiles;
   maxIterations?: number;
+}
+
+export interface MergeCheckResult {
+  ready: boolean;
+  branch: string;
+  mainBranch: string;
+  issues: string[];
+  testsPassed: boolean;
+  workingTreeClean: boolean;
+  branchUpToDate: boolean;
+}
+
+export interface MergeResult {
+  ok: boolean;
+  branch: string;
+  mainBranch: string;
+  check: MergeCheckResult;
+  mergedAt?: string;
+  error?: string;
 }
 
 export type ProviderId = "anthropic" | "openai" | "google" | "ollama";
@@ -267,6 +291,8 @@ export interface SpecOpsApi {
   stopTestLoop(): Promise<void>;
   getTestLoopState(): Promise<TestLoopState>;
   onTestLoopUpdate(callback: (state: TestLoopState) => void): () => void;
+  checkMerge(specPath: string): Promise<MergeCheckResult>;
+  mergeToMain(specPath: string): Promise<MergeResult>;
   getSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<AppSettings>;
 }

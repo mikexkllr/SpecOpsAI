@@ -26,6 +26,8 @@ const api: SpecOpsApi = {
   startTestLoop: (request) => ipcRenderer.invoke("testloop:start", request),
   stopTestLoop: () => ipcRenderer.invoke("testloop:stop"),
   getTestLoopState: () => ipcRenderer.invoke("testloop:state"),
+  checkMerge: (specPath) => ipcRenderer.invoke("merge:check", specPath),
+  mergeToMain: (specPath) => ipcRenderer.invoke("merge:run", specPath),
   onTestLoopUpdate: (callback: (state: TestLoopState) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: TestLoopState) =>
       callback(state);

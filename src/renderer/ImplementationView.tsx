@@ -4,6 +4,9 @@ import type {
   ArtifactFiles,
   GenerateIntegrationTestsResult,
   GenerateUnitTestsResult,
+  IntegrationTestFramework,
+  MergeCheckResult,
+  MergeResult,
   SubAgentState,
   SubAgentStore,
   TaskStatus,
@@ -36,6 +39,16 @@ const STATUS_NEXT: Record<TaskStatus, TaskStatus> = {
   pending: "in-progress",
   "in-progress": "done",
   done: "pending",
+};
+
+const FRAMEWORK_BADGE: Record<
+  Exclude<IntegrationTestFramework, "generic">,
+  { label: string; bg: string }
+> = {
+  playwright: { label: "Playwright", bg: "#2e7d32" },
+  flutter: { label: "Flutter", bg: "#1565c0" },
+  xcuitest: { label: "XCUITest", bg: "#546e7a" },
+  espresso: { label: "Espresso", bg: "#6a1b9a" },
 };
 
 function toApiArtifacts(a: Artifacts): ArtifactFiles {
@@ -79,6 +92,9 @@ export function ImplementationView({
     iterations: [],
     maxIterations: 5,
   });
+  const [mergeCheck, setMergeCheck] = useState<MergeCheckResult | null>(null);
+  const [mergeResult, setMergeResult] = useState<MergeResult | null>(null);
+  const [mergeBusy, setMergeBusy] = useState<"check" | "merge" | null>(null);
   const [draft, setDraft] = useState("");
   const [pendingApproval, setPendingApproval] = useState<{
     storyId: string;
@@ -196,6 +212,30 @@ export function ImplementationView({
     await window.specops.stopTestLoop();
   }
 
+  async function runMergeCheck(): Promise<void> {
+    if (mergeBusy) return;
+    setMergeBusy("check");
+    try {
+      const c = await window.specops.checkMerge(specPath);
+      setMergeCheck(c);
+      setMergeResult(null);
+    } finally {
+      setMergeBusy(null);
+    }
+  }
+
+  async function runMerge(): Promise<void> {
+    if (mergeBusy) return;
+    setMergeBusy("merge");
+    try {
+      const r = await window.specops.mergeToMain(specPath);
+      setMergeResult(r);
+      setMergeCheck(r.check);
+    } finally {
+      setMergeBusy(null);
+    }
+  }
+
   async function runTask(
     story: TechnicalStory,
     taskId: string,
@@ -306,6 +346,11 @@ export function ImplementationView({
           state={testLoopState}
           onStart={startTestLoop}
           onStop={stopTestLoop}
+          mergeCheck={mergeCheck}
+          mergeResult={mergeResult}
+          mergeBusy={mergeBusy}
+          onCheckMerge={runMergeCheck}
+          onMerge={runMerge}
         />
       </div>
     );
@@ -798,7 +843,7 @@ function StoryWorkspace({
             flex: 1,
             resize: "none",
             background: "#1a1a1a",
-            color: "#e6e6e6",
+            color: "#ffffff",
             border: "1px solid #333",
             borderRadius: 6,
             padding: 6,
@@ -950,18 +995,18 @@ function IntegrationTestsPanel({
                     <>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.8 }}>
                         <span>Written to <code>{res.path}</code></span>
-                        {res.framework === "playwright" && (
+                        {res.framework !== "generic" && (
                           <span
                             style={{
                               fontSize: 10,
                               padding: "1px 6px",
                               borderRadius: 3,
-                              background: "#2e7d32",
+                              background: FRAMEWORK_BADGE[res.framework].bg,
                               color: "#fff",
                               fontWeight: 600,
                             }}
                           >
-                            Playwright
+                            {FRAMEWORK_BADGE[res.framework].label}
                           </span>
                         )}
                       </div>
@@ -1029,10 +1074,20 @@ function TestLoopPanel({
   state,
   onStart,
   onStop,
+  mergeCheck,
+  mergeResult,
+  mergeBusy,
+  onCheckMerge,
+  onMerge,
 }: {
   state: TestLoopState;
   onStart: () => void;
   onStop: () => void;
+  mergeCheck: MergeCheckResult | null;
+  mergeResult: MergeResult | null;
+  mergeBusy: "check" | "merge" | null;
+  onCheckMerge: () => void;
+  onMerge: () => void;
 }): JSX.Element {
   const isRunning =
     state.status === "running-tests" ||
@@ -1102,6 +1157,15 @@ function TestLoopPanel({
           {state.error}
         </div>
       )}
+
+      <MergePanel
+        testsPassed={state.status === "passed"}
+        check={mergeCheck}
+        result={mergeResult}
+        busy={mergeBusy}
+        onCheck={onCheckMerge}
+        onMerge={onMerge}
+      />
 
       {state.iterations.length === 0 ? (
         <div style={{ opacity: 0.5, fontSize: 12 }}>
@@ -1240,6 +1304,128 @@ function TestLoopPanel({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function MergePanel({
+  testsPassed,
+  check,
+  result,
+  busy,
+  onCheck,
+  onMerge,
+}: {
+  testsPassed: boolean;
+  check: MergeCheckResult | null;
+  result: MergeResult | null;
+  busy: "check" | "merge" | null;
+  onCheck: () => void;
+  onMerge: () => void;
+}): JSX.Element {
+  const ready = check?.ready ?? false;
+  const merged = result?.ok ?? false;
+
+  return (
+    <div
+      style={{
+        padding: "10px 12px",
+        background: "#101418",
+        border: "1px solid #2a2a2a",
+        borderRadius: 6,
+        marginBottom: 16,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>
+          Merge to main
+        </div>
+        <button
+          onClick={onCheck}
+          disabled={busy !== null}
+          style={buttonStyle(busy === "check")}
+          title="Re-run merge safety checks"
+        >
+          {busy === "check" ? "Checking…" : "Run safety checks"}
+        </button>
+        <button
+          onClick={onMerge}
+          disabled={busy !== null || !ready}
+          title={
+            ready
+              ? "Merge this spec branch into main"
+              : "Run safety checks and resolve issues before merging"
+          }
+          style={{
+            ...buttonStyle(busy === "merge"),
+            background: ready ? "#2f855a" : "#1e1e1e",
+            color: ready ? "#fff" : "#888",
+            cursor: ready && busy === null ? "pointer" : "not-allowed",
+          }}
+        >
+          {busy === "merge" ? "Merging…" : "Merge to main"}
+        </button>
+      </div>
+      <div style={{ fontSize: 11, opacity: 0.65, marginBottom: 8 }}>
+        Auto-merges <code>{check?.branch ?? "this spec branch"}</code> into{" "}
+        <code>{check?.mainBranch ?? "main"}</code> after verifying the test loop
+        is green, the working tree is clean, and the branch is up-to-date with
+        the remote (when present).
+      </div>
+      {!testsPassed && !check && (
+        <div style={{ fontSize: 12, opacity: 0.7 }}>
+          Tip: run the test loop to "passed" first, then re-run safety checks.
+        </div>
+      )}
+      {check && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
+          <CheckRow label="Tests passed" ok={check.testsPassed} />
+          <CheckRow label="Working tree clean" ok={check.workingTreeClean} />
+          <CheckRow label="Branch up-to-date with origin/main" ok={check.branchUpToDate} />
+          {check.issues.length > 0 && (
+            <ul style={{ margin: "6px 0 0 16px", padding: 0, fontSize: 12, color: "#fbb" }}>
+              {check.issues.map((m, i) => (
+                <li key={i}>{m}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {result && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: "6px 8px",
+            background: merged ? "#0e2a1a" : "#2a1515",
+            border: `1px solid ${merged ? "#2f855a" : "#a33"}`,
+            borderRadius: 4,
+            fontSize: 12,
+            color: merged ? "#9ae6b4" : "#ff9090",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {merged
+            ? `Merged ${result.branch} → ${result.mainBranch} at ${result.mergedAt}.`
+            : `Merge failed: ${result.error ?? "see safety checks above."}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CheckRow({ label, ok }: { label: string; ok: boolean }): JSX.Element {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+      <span
+        style={{
+          width: 10,
+          height: 10,
+          borderRadius: "50%",
+          background: ok ? "#2f855a" : "#c53030",
+          flexShrink: 0,
+        }}
+      />
+      <span style={{ opacity: 0.85 }}>{label}</span>
     </div>
   );
 }

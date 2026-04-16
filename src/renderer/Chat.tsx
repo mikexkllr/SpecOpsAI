@@ -85,7 +85,7 @@ export function Chat({ phase, messages, onSend, pending }: ChatProps): JSX.Eleme
             flex: 1,
             resize: "none",
             background: "#1a1a1a",
-            color: "#e6e6e6",
+            color: "#ffffff",
             border: "1px solid #333",
             borderRadius: 6,
             padding: 6,

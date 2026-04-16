@@ -14,8 +14,10 @@ import type {
 } from "../shared/api";
 import { runAgentTurn } from "./agent";
 import {
+  checkMergeReadiness,
   createSpec,
   listSpecs,
+  mergeSpecToMain,
   openProject,
   readArtifacts,
   writeArtifact,
@@ -125,6 +127,13 @@ function registerIpc(): void {
   );
   ipcMain.handle("testloop:stop", () => stopTestLoop());
   ipcMain.handle("testloop:state", () => getTestLoopState());
+
+  ipcMain.handle("merge:check", (_e, specPath: string) =>
+    checkMergeReadiness(specPath, getTestLoopState()),
+  );
+  ipcMain.handle("merge:run", (_e, specPath: string) =>
+    mergeSpecToMain(specPath, getTestLoopState()),
+  );
 
   ipcMain.handle("settings:get", () => loadSettings());
   ipcMain.handle("settings:save", (_e, settings: AppSettings) =>

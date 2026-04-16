@@ -494,6 +494,10 @@ export async function generateUnitTests(
 
 function detectFramework(artifacts: ArtifactFiles): IntegrationTestFramework {
   const blob = `${artifacts.spec}\n${artifacts.userStories}\n${artifacts.technicalStories}`.toLowerCase();
+  // Mobile stacks take priority over web — a Flutter spec often also mentions "app".
+  if (/\bflutter\b|\bdart\b/.test(blob)) return "flutter";
+  if (/\bxcuitest\b|\bswiftui\b|\bxcode\b|\bios app\b|\bswift\b/.test(blob)) return "xcuitest";
+  if (/\bespresso\b|\bandroid app\b|\bjetpack compose\b|\bkotlin\b/.test(blob)) return "espresso";
   if (/\breact\b|\bnext\.js\b|\bnuxt\b|\bvue\b|\bsvelte\b|\bangular\b|web app|browser|\bplaywright\b/.test(blob)) {
     return "playwright";
   }
@@ -502,10 +506,18 @@ function detectFramework(artifacts: ArtifactFiles): IntegrationTestFramework {
 
 function integrationTestRelPath(storyId: string, framework: IntegrationTestFramework): string {
   const safe = storyId.replace(/[^A-Za-z0-9._-]/g, "_");
-  if (framework === "playwright") {
-    return path.join("tests", "integration", `${safe}.spec.ts`);
+  switch (framework) {
+    case "playwright":
+      return path.join("tests", "integration", `${safe}.spec.ts`);
+    case "flutter":
+      return path.join("tests", "integration", `${safe}_test.dart`);
+    case "xcuitest":
+      return path.join("tests", "integration", `${safe}UITests.swift`);
+    case "espresso":
+      return path.join("tests", "integration", `${safe}Test.kt`);
+    default:
+      return path.join("tests", "integration", `${safe}.test.md`);
   }
-  return path.join("tests", "integration", `${safe}.test.md`);
 }
 
 function detectTargetStackHint(artifacts: ArtifactFiles): string {
@@ -556,30 +568,90 @@ function playwrightPromptSection(): string {
   ].join("\n");
 }
 
+function flutterPromptSection(): string {
+  return [
+    "## Target framework: Flutter integration_test (Dart)",
+    "",
+    "Generate a runnable Flutter integration test file. Follow these rules:",
+    "- Imports: `import 'package:flutter/material.dart';`, `import 'package:flutter_test/flutter_test.dart';`, `import 'package:integration_test/integration_test.dart';`.",
+    "- First line of `main()` must be `IntegrationTestWidgetsFlutterBinding.ensureInitialized();`.",
+    "- Use `group(...)` to group scenarios for this User Story and `testWidgets(...)` for each scenario.",
+    "- Drive the UI with `WidgetTester`: `tester.pumpWidget(...)`, `tester.tap(...)`, `tester.enterText(...)`, `await tester.pumpAndSettle()`.",
+    "- Use `find.byKey(Key('…'))`, `find.byType(...)`, `find.text(...)`, `find.bySemanticsLabel(...)` — prefer keys and semantics over raw text when stability matters.",
+    "- Assertions via `expect(finder, matcher)` with matchers like `findsOneWidget`, `findsNothing`, `findsNWidgets(n)`.",
+    "- Use `// TODO:` comments where the real widget tree / entry point of the app must be plugged in (e.g. `MyApp()`).",
+    "- The file must be syntactically valid Dart that compiles under `flutter test integration_test/`.",
+  ].join("\n");
+}
+
+function xcuitestPromptSection(): string {
+  return [
+    "## Target framework: XCUITest (Swift)",
+    "",
+    "Generate a runnable XCUITest file. Follow these rules:",
+    "- Imports: `import XCTest`.",
+    "- Declare a single `final class <Name>UITests: XCTestCase { … }`. The class name MUST match the file name (minus `.swift`).",
+    "- Implement `override func setUpWithError()` with `continueAfterFailure = false` and an `XCUIApplication().launch()`.",
+    "- One `func test…()` per scenario with a descriptive name (`testUserCanSignIn`, `testEmptyFormShowsError`, …).",
+    "- Drive the UI through `XCUIApplication()`: `app.buttons[\"…\"]`, `app.textFields[\"…\"]`, `app.staticTexts[\"…\"]`, `.tap()`, `.typeText(\"…\")`.",
+    "- Assert via `XCTAssert…`: `XCTAssertTrue(element.exists)`, `XCTAssertEqual(...)`, use `.waitForExistence(timeout:)` for async UI.",
+    "- Use `// TODO:` comments for accessibility identifiers that must be added on the app side.",
+    "- The file must be syntactically valid Swift that compiles under an Xcode UI-testing target.",
+  ].join("\n");
+}
+
+function espressoPromptSection(): string {
+  return [
+    "## Target framework: Espresso (Kotlin, AndroidX)",
+    "",
+    "Generate a runnable Espresso instrumentation test file. Follow these rules:",
+    "- Imports: `androidx.test.ext.junit.runners.AndroidJUnit4`, `androidx.test.ext.junit.rules.ActivityScenarioRule`, `androidx.test.espresso.Espresso.onView`, `androidx.test.espresso.action.ViewActions.*`, `androidx.test.espresso.assertion.ViewAssertions.matches`, `androidx.test.espresso.matcher.ViewMatchers.*`, `org.junit.*`.",
+    "- Annotate the class with `@RunWith(AndroidJUnit4::class)` and declare a single `class <Name>Test { … }`. Class name MUST match the file name (minus `.kt`).",
+    "- Add `@get:Rule val scenarioRule = ActivityScenarioRule(MainActivity::class.java)` (mark the activity class as `// TODO:` if unknown).",
+    "- One `@Test fun …()` per scenario with a descriptive name.",
+    "- Drive the UI with `onView(withId(R.id.…)).perform(click(), typeText(\"…\"))` and assert with `.check(matches(isDisplayed()))` / `.check(matches(withText(\"…\")))`.",
+    "- Use `// TODO:` for view ids / activity classes that must be adapted to the real app.",
+    "- The file must be syntactically valid Kotlin that compiles under an Android instrumentation (`androidTest`) source set.",
+  ].join("\n");
+}
+
+function frameworkPromptSection(
+  framework: IntegrationTestFramework,
+  artifacts: ArtifactFiles,
+): string {
+  switch (framework) {
+    case "playwright":
+      return playwrightPromptSection();
+    case "flutter":
+      return flutterPromptSection();
+    case "xcuitest":
+      return xcuitestPromptSection();
+    case "espresso":
+      return espressoPromptSection();
+    default:
+      return ["## Target framework guidance", detectTargetStackHint(artifacts)].join(
+        "\n\n",
+      );
+  }
+}
+
 function integrationTestPrompt(
   story: UserStory,
   artifacts: ArtifactFiles,
   testFile: string,
   framework: IntegrationTestFramework,
 ): string {
-  const frameworkSection =
-    framework === "playwright"
-      ? playwrightPromptSection()
-      : [
-          "## Target framework guidance",
-          detectTargetStackHint(artifacts),
-        ].join("\n\n");
-
+  const concrete = framework !== "generic";
   return [
     "You are a test-authoring sub-agent generating INTEGRATION / end-to-end tests for ONE User Story.",
     "Write the test specification to the file path below using your `write_file` tool.",
     "Integration tests must exercise the user-visible flow end to end — not internal units.",
-    framework === "playwright"
-      ? "Each test must be a concrete, runnable Playwright scenario."
+    concrete
+      ? `Each test must be a concrete, runnable ${framework} scenario.`
       : "Structure each scenario as Given / When / Then and tie it to an acceptance criterion of the story.",
     "Cover the happy path plus the most important failure / edge cases the story implies.",
     "",
-    frameworkSection,
+    frameworkPromptSection(framework, artifacts),
     "",
     `## Target file (use write_file to create or overwrite this exact path)\n${testFile}`,
     "",

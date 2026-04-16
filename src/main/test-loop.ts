@@ -94,7 +94,12 @@ async function collect(dir: string, out: string[]): Promise<void> {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) {
       await collect(full, out);
-    } else if (/\.(test|spec)\.(ts|tsx|js|jsx|md)$/.test(e.name)) {
+    } else if (
+      /\.(test|spec)\.(ts|tsx|js|jsx|md)$/.test(e.name) ||
+      /_test\.dart$/.test(e.name) ||
+      /UITests\.swift$/.test(e.name) ||
+      /Test\.kt$/.test(e.name)
+    ) {
       out.push(full);
     }
   }
@@ -121,15 +126,39 @@ function runCommand(
   });
 }
 
-function testCommand(file: string, root: string): string {
+interface TestInvocation {
+  cmd: string;
+  skipReason?: string;
+}
+
+function testCommand(file: string, root: string): TestInvocation {
   const rel = path.relative(root, file);
   if (file.endsWith(".spec.ts") || file.endsWith(".spec.tsx")) {
-    return `npx --yes playwright test "${rel}" --reporter=line`;
+    return { cmd: `npx --yes playwright test "${rel}" --reporter=line` };
   }
   if (/\.test\.(ts|tsx|js|jsx)$/.test(file)) {
-    return `npx --yes vitest run "${rel}" 2>&1 || npx --yes jest "${rel}" --no-coverage --forceExit 2>&1`;
+    return {
+      cmd: `npx --yes vitest run "${rel}" 2>&1 || npx --yes jest "${rel}" --no-coverage --forceExit 2>&1`,
+    };
   }
-  return ""; // .test.md — documentation spec, not executable
+  if (file.endsWith("_test.dart")) {
+    return { cmd: `flutter test "${rel}"` };
+  }
+  if (file.endsWith("UITests.swift")) {
+    return {
+      cmd: "",
+      skipReason:
+        "(XCUITest — requires Xcode + simulator; open the iOS project and run this target.)",
+    };
+  }
+  if (file.endsWith("Test.kt")) {
+    return {
+      cmd: "",
+      skipReason:
+        "(Espresso — requires the Android SDK + emulator; run `./gradlew connectedAndroidTest` from the Android project.)",
+    };
+  }
+  return { cmd: "", skipReason: "(documentation spec — skipped)" };
 }
 
 async function runTests(specPath: string): Promise<TestRunResult[]> {
@@ -137,20 +166,20 @@ async function runTests(specPath: string): Promise<TestRunResult[]> {
   const files = await discoverTestFiles(specPath);
   const results: TestRunResult[] = [];
   for (const file of files) {
-    const cmd = testCommand(file, root);
+    const invocation = testCommand(file, root);
     const rel = path.relative(root, file);
-    if (!cmd) {
+    if (!invocation.cmd) {
       results.push({
         file: rel,
         passed: true,
-        stdout: "(documentation spec — skipped)",
+        stdout: invocation.skipReason ?? "(skipped)",
         stderr: "",
         duration: 0,
       });
       continue;
     }
     const start = Date.now();
-    const { stdout, stderr, code } = await runCommand(cmd, root);
+    const { stdout, stderr, code } = await runCommand(invocation.cmd, root);
     results.push({
       file: rel,
       passed: code === 0,
