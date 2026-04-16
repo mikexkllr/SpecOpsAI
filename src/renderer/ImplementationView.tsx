@@ -922,8 +922,22 @@ function IntegrationTestsPanel({
                     </div>
                   ) : (
                     <>
-                      <div style={{ opacity: 0.8 }}>
-                        Written to <code>{res.path}</code>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.8 }}>
+                        <span>Written to <code>{res.path}</code></span>
+                        {res.framework === "playwright" && (
+                          <span
+                            style={{
+                              fontSize: 10,
+                              padding: "1px 6px",
+                              borderRadius: 3,
+                              background: "#2e7d32",
+                              color: "#fff",
+                              fontWeight: 600,
+                            }}
+                          >
+                            Playwright
+                          </span>
+                        )}
                       </div>
                       {res.summary && (
                         <div style={{ marginTop: 4, opacity: 0.65 }}>

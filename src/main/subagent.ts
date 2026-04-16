@@ -23,6 +23,7 @@ import type {
   GenerateIntegrationTestsResult,
   GenerateUnitTestsRequest,
   GenerateUnitTestsResult,
+  IntegrationTestFramework,
   SubAgentChatRequest,
   SubAgentDecomposeRequest,
   SubAgentRunTaskRequest,
@@ -486,8 +487,19 @@ export async function generateUnitTests(
   }
 }
 
-function integrationTestRelPath(storyId: string): string {
+function detectFramework(artifacts: ArtifactFiles): IntegrationTestFramework {
+  const blob = `${artifacts.spec}\n${artifacts.userStories}\n${artifacts.technicalStories}`.toLowerCase();
+  if (/\breact\b|\bnext\.js\b|\bnuxt\b|\bvue\b|\bsvelte\b|\bangular\b|web app|browser|\bplaywright\b/.test(blob)) {
+    return "playwright";
+  }
+  return "generic";
+}
+
+function integrationTestRelPath(storyId: string, framework: IntegrationTestFramework): string {
   const safe = storyId.replace(/[^A-Za-z0-9._-]/g, "_");
+  if (framework === "playwright") {
+    return path.join("tests", "integration", `${safe}.spec.ts`);
+  }
   return path.join("tests", "integration", `${safe}.test.md`);
 }
 
@@ -522,20 +534,47 @@ function userStorySection(story: UserStory): string {
   ].join("\n\n");
 }
 
+function playwrightPromptSection(): string {
+  return [
+    "## Target framework: Playwright (TypeScript)",
+    "",
+    "Generate a runnable Playwright test file. Follow these rules:",
+    "- Import from `@playwright/test`: `import { test, expect } from '@playwright/test';`",
+    "- Use `test.describe(...)` to group scenarios for this User Story.",
+    "- Each scenario is a `test(...)` block with a descriptive name.",
+    "- Use Playwright locators (`page.getByRole`, `page.getByText`, `page.getByTestId`, `page.locator`) — avoid raw CSS selectors when semantic locators work.",
+    "- Use `await expect(...)` assertions (e.g., `toBeVisible()`, `toHaveText()`, `toHaveURL()`).",
+    "- Add `test.beforeEach` for shared navigation / setup steps.",
+    "- Use `// TODO:` comments for app-specific URLs or selectors that must be adapted to the real app.",
+    "- Do NOT import anything that doesn't ship with `@playwright/test`.",
+    "- The file must be valid TypeScript that passes `tsc --noEmit` against `@playwright/test` types.",
+  ].join("\n");
+}
+
 function integrationTestPrompt(
   story: UserStory,
   artifacts: ArtifactFiles,
   testFile: string,
+  framework: IntegrationTestFramework,
 ): string {
+  const frameworkSection =
+    framework === "playwright"
+      ? playwrightPromptSection()
+      : [
+          "## Target framework guidance",
+          detectTargetStackHint(artifacts),
+        ].join("\n\n");
+
   return [
     "You are a test-authoring sub-agent generating INTEGRATION / end-to-end tests for ONE User Story.",
     "Write the test specification to the file path below using your `write_file` tool.",
     "Integration tests must exercise the user-visible flow end to end — not internal units.",
-    "Structure each scenario as Given / When / Then and tie it to an acceptance criterion of the story.",
+    framework === "playwright"
+      ? "Each test must be a concrete, runnable Playwright scenario."
+      : "Structure each scenario as Given / When / Then and tie it to an acceptance criterion of the story.",
     "Cover the happy path plus the most important failure / edge cases the story implies.",
     "",
-    "## Target framework guidance",
-    detectTargetStackHint(artifacts),
+    frameworkSection,
     "",
     `## Target file (use write_file to create or overwrite this exact path)\n${testFile}`,
     "",
@@ -552,7 +591,8 @@ function integrationTestPrompt(
 export async function generateIntegrationTests(
   req: GenerateIntegrationTestsRequest,
 ): Promise<GenerateIntegrationTestsResult> {
-  const relPath = integrationTestRelPath(req.story.id);
+  const framework = detectFramework(req.artifacts);
+  const relPath = integrationTestRelPath(req.story.id, framework);
   const absPath = path.join(req.specPath, relPath);
 
   try {
@@ -562,7 +602,7 @@ export async function generateIntegrationTests(
     const model = await buildChatModel(cfg);
     const agent = createDeepAgent({
       model,
-      systemPrompt: integrationTestPrompt(req.story, req.artifacts, relPath),
+      systemPrompt: integrationTestPrompt(req.story, req.artifacts, relPath, framework),
       backend: new FilesystemBackend({ rootDir: req.specPath }),
     });
     const result = await agent.invoke({
@@ -582,16 +622,18 @@ export async function generateIntegrationTests(
         path: relPath,
         content: "",
         summary,
+        framework,
         error: `Sub-agent did not write ${relPath}.`,
       };
     }
-    return { storyId: req.story.id, path: relPath, content, summary };
+    return { storyId: req.story.id, path: relPath, content, summary, framework };
   } catch (err) {
     return {
       storyId: req.story.id,
       path: relPath,
       content: "",
       summary: "",
+      framework,
       error: (err as Error).message,
     };
   }

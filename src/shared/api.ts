@@ -117,11 +117,14 @@ export interface GenerateIntegrationTestsRequest {
   artifacts: ArtifactFiles;
 }
 
+export type IntegrationTestFramework = "playwright" | "generic";
+
 export interface GenerateIntegrationTestsResult {
   storyId: string;
   path: string;
   content: string;
   summary: string;
+  framework: IntegrationTestFramework;
   error?: string;
 }
 
