@@ -39,6 +39,10 @@ import { getActiveProvider } from "./settings";
 
 const STORE_FILE = path.join(".specops", "subagents.json");
 
+function projectRoot(specPath: string): string {
+  return path.resolve(specPath, "..", "..");
+}
+
 type ChatMsg = { role: "user" | "assistant"; content: string };
 
 async function loadStore(specPath: string): Promise<SubAgentStore> {
@@ -219,8 +223,8 @@ function chatSystemPrompt(
   return [
     "You are a SUB-AGENT scoped to a single Technical Story.",
     "Your context is isolated: do not discuss other stories. Keep responses concise and actionable.",
-    "You have filesystem tools (ls, read_file, write_file, edit_file, glob, grep) rooted at this spec's working directory.",
-    "Help implement the tasks below: propose code, ask targeted questions, flag blockers.",
+    "You have filesystem tools (ls, read_file, write_file, edit_file, glob, grep) rooted at the PROJECT ROOT — you can see and edit the full source tree (e.g. `src/`, `package.json`, `tests/`). The spec markdown lives under `specs/<id>/`.",
+    "Help implement the tasks below by ACTUALLY editing files with write_file / edit_file — do not just describe changes in prose.",
     "",
     contextSections(artifacts),
     "",
@@ -246,7 +250,7 @@ async function runStorySubAgent(
   const agent = createDeepAgent({
     model,
     systemPrompt: system,
-    backend: new FilesystemBackend({ rootDir: specPath }),
+    backend: new FilesystemBackend({ rootDir: projectRoot(specPath) }),
   });
   const result = await agent.invoke({ messages: lcMessages });
   return lastAssistantText(result) || "(no reply)";
@@ -443,7 +447,8 @@ export async function generateUnitTests(
   const state = store[req.story.id];
   const tasks = state?.tasks ?? [];
   const relPath = unitTestRelPath(req.story.id);
-  const absPath = path.join(req.specPath, relPath);
+  const root = projectRoot(req.specPath);
+  const absPath = path.join(root, relPath);
 
   try {
     const cfg = await getActiveProvider();
@@ -453,7 +458,7 @@ export async function generateUnitTests(
     const agent = createDeepAgent({
       model,
       systemPrompt: unitTestPrompt(req.story, tasks, req.artifacts, relPath),
-      backend: new FilesystemBackend({ rootDir: req.specPath }),
+      backend: new FilesystemBackend({ rootDir: root }),
     });
     const result = await agent.invoke({
       messages: [
@@ -593,7 +598,8 @@ export async function generateIntegrationTests(
 ): Promise<GenerateIntegrationTestsResult> {
   const framework = detectFramework(req.artifacts);
   const relPath = integrationTestRelPath(req.story.id, framework);
-  const absPath = path.join(req.specPath, relPath);
+  const root = projectRoot(req.specPath);
+  const absPath = path.join(root, relPath);
 
   try {
     const cfg = await getActiveProvider();
@@ -603,7 +609,7 @@ export async function generateIntegrationTests(
     const agent = createDeepAgent({
       model,
       systemPrompt: integrationTestPrompt(req.story, req.artifacts, relPath, framework),
-      backend: new FilesystemBackend({ rootDir: req.specPath }),
+      backend: new FilesystemBackend({ rootDir: root }),
     });
     const result = await agent.invoke({
       messages: [

@@ -128,6 +128,47 @@ export interface GenerateIntegrationTestsResult {
   error?: string;
 }
 
+export interface TestRunResult {
+  file: string;
+  passed: boolean;
+  stdout: string;
+  stderr: string;
+  duration: number;
+}
+
+export type TestLoopVerdict = "fix-code" | "fix-test";
+
+export interface TestLoopIteration {
+  iteration: number;
+  results: TestRunResult[];
+  failures: number;
+  verdict?: TestLoopVerdict;
+  agentSummary?: string;
+}
+
+export type TestLoopStatus =
+  | "idle"
+  | "running-tests"
+  | "analyzing"
+  | "fixing"
+  | "passed"
+  | "max-iterations"
+  | "error"
+  | "stopped";
+
+export interface TestLoopState {
+  status: TestLoopStatus;
+  iterations: TestLoopIteration[];
+  maxIterations: number;
+  error?: string;
+}
+
+export interface TestLoopRequest {
+  specPath: string;
+  artifacts: ArtifactFiles;
+  maxIterations?: number;
+}
+
 export type ProviderId = "anthropic" | "openai" | "google" | "ollama";
 
 export interface ProviderConfig {
@@ -222,6 +263,10 @@ export interface SpecOpsApi {
     status: TaskStatus,
   ): Promise<SubAgentState>;
   resetSubAgent(specPath: string, storyId: string): Promise<SubAgentStore>;
+  startTestLoop(request: TestLoopRequest): Promise<void>;
+  stopTestLoop(): Promise<void>;
+  getTestLoopState(): Promise<TestLoopState>;
+  onTestLoopUpdate(callback: (state: TestLoopState) => void): () => void;
   getSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<AppSettings>;
 }

@@ -10,6 +10,7 @@ import type {
   SubAgentDecomposeRequest,
   SubAgentRunTaskRequest,
   TaskStatus,
+  TestLoopRequest,
 } from "../shared/api";
 import { runAgentTurn } from "./agent";
 import {
@@ -30,6 +31,12 @@ import {
   subAgentChat,
   updateTaskStatus,
 } from "./subagent";
+import {
+  getTestLoopState,
+  onTestLoopUpdate,
+  startTestLoop,
+  stopTestLoop,
+} from "./test-loop";
 
 const isDev = !app.isPackaged;
 
@@ -113,6 +120,12 @@ function registerIpc(): void {
       generateIntegrationTests(request),
   );
 
+  ipcMain.handle("testloop:start", (_e, request: TestLoopRequest) =>
+    startTestLoop(request),
+  );
+  ipcMain.handle("testloop:stop", () => stopTestLoop());
+  ipcMain.handle("testloop:state", () => getTestLoopState());
+
   ipcMain.handle("settings:get", () => loadSettings());
   ipcMain.handle("settings:save", (_e, settings: AppSettings) =>
     saveSettings(settings),
@@ -122,6 +135,12 @@ function registerIpc(): void {
 app.whenReady().then(() => {
   registerIpc();
   createWindow();
+
+  onTestLoopUpdate((state) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("testloop:update", state);
+    }
+  });
 });
 
 app.on("window-all-closed", () => {

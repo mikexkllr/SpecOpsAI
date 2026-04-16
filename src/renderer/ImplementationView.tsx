@@ -8,11 +8,14 @@ import type {
   SubAgentStore,
   TaskStatus,
   TechnicalStory,
+  TestLoopState,
+  TestLoopStatus,
   UserStory,
 } from "../shared/api";
 import type { Artifacts } from "./phases";
 import { parseTechnicalStories } from "./technical-stories";
 import { parseUserStories } from "./user-stories";
+import { MarkdownEditor } from "./MarkdownEditor";
 
 interface ImplementationViewProps {
   specPath: string;
@@ -21,7 +24,7 @@ interface ImplementationViewProps {
   onCodeChange: (code: string) => void;
 }
 
-type Tab = "stories" | "integration" | "code";
+type Tab = "stories" | "integration" | "testloop" | "code";
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   pending: "Pending",
@@ -71,6 +74,11 @@ export function ImplementationView({
     Record<string, GenerateIntegrationTestsResult>
   >({});
   const [integrationBusy, setIntegrationBusy] = useState<string | null>(null);
+  const [testLoopState, setTestLoopState] = useState<TestLoopState>({
+    status: "idle",
+    iterations: [],
+    maxIterations: 5,
+  });
   const [draft, setDraft] = useState("");
   const [pendingApproval, setPendingApproval] = useState<{
     storyId: string;
@@ -86,6 +94,11 @@ export function ImplementationView({
     if (selectedId && stories.find((s) => s.id === selectedId)) return;
     setSelectedId(stories[0]?.id ?? null);
   }, [stories, selectedId]);
+
+  useEffect(() => {
+    window.specops.getTestLoopState().then(setTestLoopState);
+    return window.specops.onTestLoopUpdate(setTestLoopState);
+  }, []);
 
   const selectedStory = stories.find((s) => s.id === selectedId) ?? null;
   const selectedState: SubAgentState | null = selectedId ? store[selectedId] ?? null : null;
@@ -172,6 +185,17 @@ export function ImplementationView({
     setPendingApproval(null);
   }
 
+  async function startTestLoop(): Promise<void> {
+    await window.specops.startTestLoop({
+      specPath,
+      artifacts: toApiArtifacts(artifacts),
+    });
+  }
+
+  async function stopTestLoop(): Promise<void> {
+    await window.specops.stopTestLoop();
+  }
+
   async function runTask(
     story: TechnicalStory,
     taskId: string,
@@ -251,22 +275,10 @@ export function ImplementationView({
     return (
       <div style={layoutStyle}>
         <Tabs tab={tab} onChange={setTab} />
-        <textarea
+        <MarkdownEditor
           value={artifacts.code}
-          onChange={(e) => onCodeChange(e.target.value)}
+          onChange={(v) => onCodeChange(v)}
           placeholder="// code notes — implementation agent will drive real edits"
-          style={{
-            flex: 1,
-            background: "#141414",
-            color: "#e6e6e6",
-            border: "none",
-            outline: "none",
-            padding: 16,
-            resize: "none",
-            fontFamily: "ui-monospace, Menlo, monospace",
-            fontSize: 13,
-            lineHeight: 1.5,
-          }}
         />
       </div>
     );
@@ -281,6 +293,19 @@ export function ImplementationView({
           results={integrationByStory}
           busyId={integrationBusy}
           onGenerate={generateIntegrationFor}
+        />
+      </div>
+    );
+  }
+
+  if (tab === "testloop") {
+    return (
+      <div style={layoutStyle}>
+        <Tabs tab={tab} onChange={setTab} />
+        <TestLoopPanel
+          state={testLoopState}
+          onStart={startTestLoop}
+          onStop={stopTestLoop}
         />
       </div>
     );
@@ -344,6 +369,7 @@ function Tabs({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }): JSX.
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: "stories", label: "Sub-agents" },
     { id: "integration", label: "Integration tests" },
+    { id: "testloop", label: "Test loop" },
     { id: "code", label: "Code notes" },
   ];
   return (
@@ -970,6 +996,250 @@ function IntegrationTestsPanel({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+const TESTLOOP_STATUS_LABEL: Record<TestLoopStatus, string> = {
+  idle: "Ready to run",
+  "running-tests": "Running tests…",
+  analyzing: "Analyzing failures…",
+  fixing: "Applying fix…",
+  passed: "All tests passed",
+  "max-iterations": "Max iterations reached — failures remain",
+  error: "Error",
+  stopped: "Stopped",
+};
+
+function testLoopStatusColor(status: TestLoopStatus): string {
+  switch (status) {
+    case "passed":
+      return "#68d391";
+    case "error":
+    case "stopped":
+      return "#fc8181";
+    case "max-iterations":
+      return "#f6ad55";
+    default:
+      return "#e6e6e6";
+  }
+}
+
+function TestLoopPanel({
+  state,
+  onStart,
+  onStop,
+}: {
+  state: TestLoopState;
+  onStart: () => void;
+  onStop: () => void;
+}): JSX.Element {
+  const isRunning =
+    state.status === "running-tests" ||
+    state.status === "analyzing" ||
+    state.status === "fixing";
+
+  return (
+    <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+      <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 12 }}>
+        The autonomous test loop runs all unit and integration tests, then asks
+        the agent to decide — fix the source code or correct the test — and
+        applies the fix. It repeats until everything passes or the iteration
+        limit is reached.
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          marginBottom: 16,
+        }}
+      >
+        <div
+          style={{
+            flex: 1,
+            fontSize: 13,
+            fontWeight: 600,
+            color: testLoopStatusColor(state.status),
+          }}
+        >
+          {TESTLOOP_STATUS_LABEL[state.status]}
+        </div>
+        {isRunning ? (
+          <button
+            onClick={onStop}
+            style={{ ...buttonStyle(false), background: "#3a1e1e" }}
+          >
+            Stop
+          </button>
+        ) : (
+          <button
+            onClick={onStart}
+            style={{
+              ...buttonStyle(false),
+              background: "#2f855a",
+              color: "#fff",
+            }}
+          >
+            {state.iterations.length > 0 ? "Re-run loop" : "Start test loop"}
+          </button>
+        )}
+      </div>
+
+      {state.error && (
+        <div
+          style={{
+            padding: "8px 10px",
+            background: "#2a1515",
+            border: "1px solid #a33",
+            borderRadius: 4,
+            fontSize: 12,
+            color: "#ff8080",
+            marginBottom: 12,
+          }}
+        >
+          {state.error}
+        </div>
+      )}
+
+      {state.iterations.length === 0 ? (
+        <div style={{ opacity: 0.5, fontSize: 12 }}>
+          No iterations yet. Generate unit / integration tests in the other
+          tabs, then start the loop.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {state.iterations.map((iter) => (
+            <div
+              key={iter.iteration}
+              style={{
+                padding: "10px 12px",
+                background: "#151515",
+                border: `1px solid ${iter.failures === 0 ? "#2f855a" : "#7a4a00"}`,
+                borderRadius: 6,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginBottom: 8,
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 600 }}>
+                  Iteration {iter.iteration}
+                </span>
+                <span
+                  style={{
+                    fontSize: 10,
+                    padding: "1px 6px",
+                    borderRadius: 3,
+                    background: iter.failures === 0 ? "#2f855a" : "#7a4a00",
+                    color: "#fff",
+                    fontWeight: 600,
+                  }}
+                >
+                  {iter.failures === 0
+                    ? "ALL PASSED"
+                    : `${iter.failures} failure${iter.failures > 1 ? "s" : ""}`}
+                </span>
+                {iter.verdict && (
+                  <span
+                    style={{
+                      fontSize: 10,
+                      padding: "1px 6px",
+                      borderRadius: 3,
+                      background:
+                        iter.verdict === "fix-code" ? "#2b6cb0" : "#6b46c1",
+                      color: "#fff",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {iter.verdict === "fix-code" ? "Fixed code" : "Fixed test"}
+                  </span>
+                )}
+              </div>
+
+              {iter.agentSummary && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    opacity: 0.8,
+                    marginBottom: 8,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {iter.agentSummary}
+                </div>
+              )}
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {iter.results.map((r) => (
+                  <div
+                    key={r.file}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "4px 6px",
+                      background: "#0f1115",
+                      borderRadius: 3,
+                      fontSize: 11,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: r.passed ? "#2f855a" : "#c53030",
+                        flexShrink: 0,
+                      }}
+                    />
+                    <code style={{ flex: 1, opacity: 0.85 }}>{r.file}</code>
+                    <span style={{ opacity: 0.5, fontSize: 10 }}>
+                      {r.duration > 0 ? `${(r.duration / 1000).toFixed(1)}s` : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {iter.results.some((r) => !r.passed) && (
+                <details style={{ marginTop: 8 }}>
+                  <summary
+                    style={{ fontSize: 11, cursor: "pointer", opacity: 0.7 }}
+                  >
+                    Show failure output
+                  </summary>
+                  {iter.results
+                    .filter((r) => !r.passed)
+                    .map((r) => (
+                      <pre
+                        key={r.file}
+                        style={{
+                          marginTop: 6,
+                          maxHeight: 200,
+                          overflow: "auto",
+                          background: "#0a0b0f",
+                          color: "#ff8080",
+                          padding: 8,
+                          borderRadius: 3,
+                          fontSize: 10,
+                          lineHeight: 1.4,
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {`--- ${r.file} ---\n${r.stderr || r.stdout}`}
+                      </pre>
+                    ))}
+                </details>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

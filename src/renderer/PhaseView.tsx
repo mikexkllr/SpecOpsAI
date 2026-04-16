@@ -1,5 +1,6 @@
 import React from "react";
 import type { Phase, Artifacts } from "./phases";
+import { MarkdownEditor } from "./MarkdownEditor";
 
 interface PhaseViewProps {
   phase: Phase;
@@ -11,33 +12,36 @@ export function PhaseView({ phase, artifacts, onChange }: PhaseViewProps): JSX.E
   switch (phase) {
     case "spec":
       return (
-        <ArtifactEditor
-          title="Specification"
-          subtitle="Describe what to build. Code is hidden until the Implementation phase."
-          value={artifacts.spec}
-          onChange={(v) => onChange({ spec: v })}
-          placeholder="# Spec&#10;&#10;Goals, constraints, non-goals…"
-        />
+        <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+          <EditorHeader title="Specification" subtitle="Describe what to build. Code is hidden until the Implementation phase." />
+          <MarkdownEditor
+            value={artifacts.spec}
+            onChange={(v) => onChange({ spec: v })}
+            placeholder="# Spec&#10;&#10;Goals, constraints, non-goals…"
+          />
+        </div>
       );
     case "user-story":
       return (
-        <ArtifactEditor
-          title="User Stories"
-          subtitle="Derived from the Spec. Edit manually or via chat."
-          value={artifacts.userStories}
-          onChange={(v) => onChange({ userStories: v })}
-          placeholder="- As a …, I want …, so that …"
-        />
+        <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+          <EditorHeader title="User Stories" subtitle="Derived from the Spec. Edit manually or via chat." />
+          <MarkdownEditor
+            value={artifacts.userStories}
+            onChange={(v) => onChange({ userStories: v })}
+            placeholder="- As a …, I want …, so that …"
+          />
+        </div>
       );
     case "technical-story":
       return (
-        <ArtifactEditor
-          title="Technical Stories"
-          subtitle="Derived from User Stories. Each becomes a sub-agent task."
-          value={artifacts.technicalStories}
-          onChange={(v) => onChange({ technicalStories: v })}
-          placeholder="- [TS-1] Implement …"
-        />
+        <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+          <EditorHeader title="Technical Stories" subtitle="Derived from User Stories. Each becomes a sub-agent task." />
+          <MarkdownEditor
+            value={artifacts.technicalStories}
+            onChange={(v) => onChange({ technicalStories: v })}
+            placeholder="- [TS-1] Implement …"
+          />
+        </div>
       );
     case "implementation":
       return (
@@ -51,6 +55,15 @@ export function PhaseView({ phase, artifacts, onChange }: PhaseViewProps): JSX.E
         />
       );
   }
+}
+
+function EditorHeader({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div style={{ padding: "10px 16px", borderBottom: "1px solid #2a2a2a" }}>
+      <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
+      <div style={{ fontSize: 12, opacity: 0.65 }}>{subtitle}</div>
+    </div>
+  );
 }
 
 interface EditorProps {
