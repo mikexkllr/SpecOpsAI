@@ -1,6 +1,7 @@
+import * as path from "node:path";
 import type * as DeepAgents from "deepagents";
 import type { BaseMessage } from "@langchain/core/messages";
-import type { StructuredToolInterface } from "@langchain/core/tools";
+import { z } from "zod";
 
 async function loadDeepagents(): Promise<typeof DeepAgents> {
   return await (Function('return import("deepagents")')() as Promise<typeof DeepAgents>);
@@ -9,6 +10,11 @@ async function loadDeepagents(): Promise<typeof DeepAgents> {
 type MessagesModule = typeof import("@langchain/core/messages");
 async function loadMessages(): Promise<MessagesModule> {
   return await (Function('return import("@langchain/core/messages")')() as Promise<MessagesModule>);
+}
+
+type ToolsModule = typeof import("@langchain/core/tools");
+async function loadTools(): Promise<ToolsModule> {
+  return await (Function('return import("@langchain/core/tools")')() as Promise<ToolsModule>);
 }
 import type {
   AgentTurn,
@@ -65,6 +71,10 @@ const PHASE_CONFIG: Record<Phase, PhaseConfig> = {
   },
 };
 
+function projectRoot(specPath: string): string {
+  return path.resolve(specPath, "..", "..");
+}
+
 function buildSystemPrompt(phase: Phase, artifacts: ArtifactFiles): string {
   const cfg = PHASE_CONFIG[phase];
   const sections: string[] = [
@@ -72,15 +82,13 @@ function buildSystemPrompt(phase: Phase, artifacts: ArtifactFiles): string {
     `Current phase: **${cfg.label}**.`,
     cfg.guidance,
     "",
-    "Respond in EXACTLY this format, with no prose before or after:",
-    "<artifact>",
-    `...the complete updated ${cfg.label} as markdown...`,
-    "</artifact>",
-    "<reply>",
-    "One to three sentences describing what you changed or what you need from the user.",
-    "</reply>",
-    "",
-    "Always emit the FULL artifact, not a diff. If the user's message is only a question, repeat the existing artifact unchanged inside <artifact>.",
+    "## Tools available to you",
+    "You have filesystem tools (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`) rooted at the PROJECT ROOT. Use them to ground your answers in the real codebase — look at `src/`, `package.json`, existing specs under `specs/`, etc. — before proposing or revising the artifact.",
+    `To persist the ${cfg.label} markdown, call the **\`update_artifact\`** tool with the FULL updated content (never a diff). Call it exactly once per turn when you intend to change the artifact. If the user's message is purely a question, SKIP the tool call and leave the artifact untouched.`,
+    phase === "implementation"
+      ? "You may also use `write_file` / `edit_file` to make direct source edits in this phase."
+      : "Do not edit files outside the current artifact via `write_file`; use `update_artifact` for the artifact itself.",
+    "After any tool calls, reply with 1–3 sentences describing what you changed or what you need from the user.",
     "",
     "## Context from earlier phases",
   ];
@@ -100,14 +108,6 @@ function buildSystemPrompt(phase: Phase, artifacts: ArtifactFiles): string {
     current || "(empty — create from scratch based on the user's message)",
   );
   return sections.join("\n");
-}
-
-function parseResponse(text: string): { artifact?: string; reply: string } {
-  const artifactMatch = text.match(/<artifact>([\s\S]*?)<\/artifact>/);
-  const replyMatch = text.match(/<reply>([\s\S]*?)<\/reply>/);
-  const artifact = artifactMatch ? artifactMatch[1].trim() : undefined;
-  const reply = replyMatch ? replyMatch[1].trim() : text.trim();
-  return { artifact, reply };
 }
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
@@ -148,48 +148,47 @@ function lastAssistantText(result: unknown): string {
   return "";
 }
 
-export interface InvokeOptions {
-  tools?: StructuredToolInterface[];
-  recursionLimit?: number;
-}
-
-export async function invokeDeepAgent(
-  system: string,
-  messages: ChatMessage[],
-  opts: InvokeOptions = {},
-): Promise<string> {
-  const cfg = await getActiveProvider();
-  const model = await buildChatModel(cfg);
-  const { createDeepAgent } = await loadDeepagents();
-  const lcMessages = await toLcMessages(messages);
-  const agent = createDeepAgent({
-    model,
-    systemPrompt: system,
-    tools: (opts.tools ?? []) as StructuredToolInterface[],
-  });
-  const result = await agent.invoke(
-    { messages: lcMessages },
-    opts.recursionLimit ? { recursionLimit: opts.recursionLimit } : undefined,
-  );
-  return lastAssistantText(result);
-}
-
 export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurnResult> {
   const phaseCfg = PHASE_CONFIG[req.phase];
   const system = buildSystemPrompt(req.phase, req.artifacts);
   const messages = toMessages(req.history, req.message);
 
-  let text: string;
   try {
-    text = await invokeDeepAgent(system, messages);
+    const cfg = await getActiveProvider();
+    const model = await buildChatModel(cfg);
+    const { createDeepAgent, FilesystemBackend } = await loadDeepagents();
+    const { tool } = await loadTools();
+    const lcMessages = await toLcMessages(messages);
+
+    let captured: string | null = null;
+    const updateArtifact = tool(
+      async (input: { content: string }) => {
+        captured = input.content;
+        return `Captured ${input.content.length} chars for ${phaseCfg.label}.`;
+      },
+      {
+        name: "update_artifact",
+        description: `Persist the full updated ${phaseCfg.label} markdown. Call this exactly once per turn when you intend to change the artifact. Omit the call if the user's message is purely a question.`,
+        schema: z.object({ content: z.string() }),
+      },
+    );
+
+    const agent = createDeepAgent({
+      model,
+      systemPrompt: system,
+      backend: new FilesystemBackend({ rootDir: projectRoot(req.specPath) }),
+      tools: [updateArtifact],
+    });
+    const result = await agent.invoke({ messages: lcMessages });
+    const reply = lastAssistantText(result) || "(no reply)";
+    return {
+      reply,
+      artifact:
+        captured !== null
+          ? { key: phaseCfg.artifact, content: captured }
+          : undefined,
+    };
   } catch (err) {
     return { reply: `Agent error: ${(err as Error).message}` };
   }
-
-  const { artifact, reply } = parseResponse(text);
-  return {
-    reply: reply || "(no reply)",
-    artifact:
-      artifact !== undefined ? { key: phaseCfg.artifact, content: artifact } : undefined,
-  };
 }

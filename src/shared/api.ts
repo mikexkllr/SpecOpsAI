@@ -27,6 +27,7 @@ export interface AgentTurn {
 }
 
 export interface AgentTurnRequest {
+  specPath: string;
   phase: Phase;
   artifacts: ArtifactFiles;
   history: AgentTurn[];

@@ -114,6 +114,7 @@ export function App(): JSX.Element {
     setPending(true);
     try {
       const result = await window.specops.agentChat({
+        specPath: activeSpec.path,
         phase,
         artifacts,
         history,
