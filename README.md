@@ -12,13 +12,113 @@ harness, against any of four configurable model providers
 
 ## Table of Contents
 
-1. [What the chatbot does in each phase](#what-the-chatbot-does-in-each-phase)
-2. [Agent modes (HITL vs YOLO)](#agent-modes-hitl-vs-yolo)
-3. [Testing system](#testing-system)
-4. [Project / spec layout on disk](#project--spec-layout-on-disk)
-5. [Technical architecture](#technical-architecture)
-6. [File-by-file walkthrough](#file-by-file-walkthrough)
-7. [Build & run](#build--run)
+1. [Interface design](#interface-design)
+2. [What the chatbot does in each phase](#what-the-chatbot-does-in-each-phase)
+3. [Agent modes (HITL vs YOLO)](#agent-modes-hitl-vs-yolo)
+4. [Testing system](#testing-system)
+5. [Project / spec layout on disk](#project--spec-layout-on-disk)
+6. [Technical architecture](#technical-architecture)
+7. [File-by-file walkthrough](#file-by-file-walkthrough)
+8. [Build & run](#build--run)
+
+---
+
+## Interface design
+
+The UI takes visual cues from terminal-first dev tools — Claude Code and
+OpenCode in particular — and leans into a monospace, dense, "prompt line"
+aesthetic rather than a conventional dashboard look.
+
+### Design tokens
+
+All colors, type, and spacing live as CSS custom properties at the top of
+[styles.css](src/renderer/styles.css#L1-L54):
+
+- **Type** — [JetBrains Mono](https://www.jetbrains.com/mono/) everywhere in the
+  shell (`--font-mono`), [Inter](https://rsms.me/inter/) reserved for rendered
+  markdown prose inside the preview pane (`--font-sans`). Font scale runs
+  `11 / 12 / 13 / 14 / 16 px`.
+- **Surfaces** — four warm-black layers (`--bg-0` … `--bg-3`) plus a
+  `--bg-overlay` for the settings modal, with matching
+  `--border-subtle / --border / --border-strong` dividers.
+- **Foreground** — four tiers (`--fg-0` primary through `--fg-3` faint) on a
+  warm off-white so the mono type does not read as clinical blue-white.
+- **Accent — Claude coral.** `--accent: #d97757` is the single brand hue: it
+  drives the primary button, the focus ring (`input:focus` → accent border),
+  active phase tab underlines, the story-list active indicator, user chat
+  bubbles, markdown `h1/h3` headings, and the brand glyph in the header.
+- **Semantic palette** — ANSI-flavored `--ok / --warn / --danger / --info /
+  --magenta`, each with a matching `-soft` variant for soft-tinted backgrounds.
+  These back the `.badge`, `.notice`, `.status-text`, `.iter`, and
+  `.task-item .task-status.*` components.
+
+The palette is tuned warm on purpose — every bg and fg has a subtle yellow
+cast so the coral accent reads as "same family" rather than as a bolt-on
+highlight on cold grey.
+
+### Motifs
+
+- **Prompt glyphs.** `▸` marks section titles, the brand, and editor headers;
+  `$` prefixes the project bar; `❯` prefixes user chat messages; `●` prefixes
+  agent messages; `◌` pulses while the agent is thinking
+  ([styles.css @keyframes pulse](src/renderer/styles.css)).
+- **ASCII banner.** The empty state renders a hand-drawn
+  `▗▄▖  ▗▄▄▖ ▗▄▄▄▖ ▗▄▄▖` banner in coral ([App.tsx EmptyState](src/renderer/App.tsx))
+  instead of a graphic, reinforcing the "this is a terminal, not a dashboard"
+  frame.
+- **Sharp corners, thin dividers.** Radius is either `4px` (`--radius`) or
+  `6px` (`--radius-lg`) and dividers are strictly 1px. No drop shadows except
+  under the settings modal.
+- **Frameless window, custom chrome.** The Electron window is frameless; the
+  app header is a drag region (`-webkit-app-region: drag`) and
+  `<WindowControls />` ([App.tsx](src/renderer/App.tsx)) renders the
+  minimize / maximize / close triplet as inline SVG buttons with a coral-less
+  hover — the close button flips to `--danger` on hover to match the rest of
+  the chrome's color language.
+- **Subtle animations.** 120 ms hover transitions on buttons/inputs; the
+  thinking indicator is the only animation that loops.
+
+### Component class catalog
+
+All styling is class-driven. The reusable classes, all defined in
+[styles.css](src/renderer/styles.css):
+
+| Class(es) | Purpose |
+|---|---|
+| `.app`, `.app-header`, `.header-meta`, `.header-status`, `.brand` | Top-level shell and frameless drag region. |
+| `.btn`, `.btn-primary`, `.btn-success`, `.btn-danger`, `.btn-ghost`, `.btn-icon`, `.btn-sm` | The one button system. Primary is coral; success/danger use soft semantic tints. |
+| `.mode-toggle` (+ `.active.hitl` / `.active.yolo`) | HITL/YOLO segmented toggle in the header. |
+| `.projectbar` (+ `.prompt-prefix`, `.project-info`) | The shell-prompt-styled project selector row. |
+| `.phasenav` (+ `.step-num`, `.active`) | Phase tabs with step numbers in `[1]` brackets. |
+| `.editor-header` (+ `.title`, `.subtitle`) | The `▸ title / subtitle` header above each artifact editor. |
+| `.code-editor` | The monospace textarea used for the legacy code view. |
+| `.chat`, `.chat-header`, `.chat-log`, `.chat-msg.user / .agent / .thinking`, `.chat-input-row`, `.chat-empty` | All chat surfaces — phase chat and sub-agent chat both use these. |
+| `.refs-collapsed`, `.refs-drawer`, `.refs-header`, `.refs-tabs`, `.refs-content` | Upstream-references side drawer. |
+| `.tabs` | The implementation-view tab strip (`sub-agents / integration tests / test loop / code notes`). |
+| `.story-list` (+ `.story-id`, `.story-title`, `.story-meta`) | Left sidebar of decomposable stories. Active item gets a coral left border. |
+| `.story-workspace`, `.story-head`, `.story-toolbar`, `.task-list`, `.task-item` (+ `.task-status.pending / .in-progress / .done`) | Per-story workspace — head, action toolbar, decomposed task list. |
+| `.badge.hitl / .yolo / .ok / .warn / .danger / .info / .magenta` | Uppercase mono pills used for framework labels, iteration results, and mode indicators. |
+| `.notice.info / .ok / .warn / .danger` | Banner for generated-test results, merge outcomes, HITL approval prompts, etc. |
+| `.card`, `.iter`, `.iter-head`, `.test-row`, `pre.code-block` (+ `.failure`) | Test-loop iteration cards and code-block output. |
+| `.overlay`, `.modal`, `.modal-header / -body / -side / -content / -footer`, `.field`, `.field-label`, `.option-card`, `.section-title`, `.section-subtitle` | Settings modal. |
+| `.empty-state` (+ `.ascii`, `.msg`) | ASCII-banner empty state. |
+| `.window-controls`, `.wc-btn`, `.wc-close` | Frameless-window chrome. |
+
+The legacy `MarkdownEditor` (wrapper around `react-markdown-editor-lite`) is
+themed with a scoped `<style>` block inside
+[MarkdownEditor.tsx](src/renderer/MarkdownEditor.tsx), reading from the same
+CSS variables so the embedded editor visually merges with the rest of the
+shell (caret is coral, `h1` gets the `▸` prefix, `blockquote` gets a coral
+left bar, `code` uses `--bg-2`, etc.).
+
+### Changing the look
+
+Because every color, font, and radius is a CSS variable at
+[styles.css:5](src/renderer/styles.css#L5), the most common retheming
+task — re-skinning to a different accent — is a one-line change to `--accent`,
+`--accent-soft`, `--accent-strong`, and `--accent-fg`. Surface/foreground
+adjustments are likewise one `var(...)` edit away and propagate everywhere
+including the markdown preview.
 
 ---
 
@@ -29,27 +129,36 @@ Each phase has its own chat history (`messagesByPhase`, [App.tsx:31-36](src/rend
 and its own system prompt that instructs the agent what to produce.
 
 All four phases share the same machinery:
-[`runAgentTurn`](src/main/agent.ts#L177-L195) builds a system prompt, runs the
-deepagent, and parses an XML-fenced response of the form
+[`runAgentTurn`](src/main/agent.ts#L143-L188) builds a per-phase system prompt,
+runs a deepagent, and returns `{ reply, artifact? }`.
 
-```
-<artifact>
-…the complete updated artifact…
-</artifact>
-<reply>
-One to three sentences for the chat.
-</reply>
-```
+Two capabilities are wired into every phase chatbot:
 
-The `<artifact>` block replaces the current artifact file on disk; the
-`<reply>` block is shown in the chat. The agent is instructed to **always
-emit the FULL artifact, not a diff** ([agent.ts:83](src/main/agent.ts#L83)).
+- **Real codebase access.** Each turn builds a `FilesystemBackend` rooted at
+  the project root ([agent.ts:170](src/main/agent.ts#L170)), giving the agent
+  `ls`, `read_file`, `write_file`, `edit_file`, `glob`, and `grep` over the
+  entire repo. This is the same backend the per-story sub-agent chat uses,
+  so the phase agent can ground its spec/story revisions in the real code
+  (e.g. grep for IPC channels before writing a spec section about them).
+- **`update_artifact` tool.** A structured tool (zod schema `{ content: string }`)
+  is registered on every turn ([agent.ts:155-167](src/main/agent.ts#L155-L167)).
+  The agent calls it exactly once when it intends to persist an updated
+  artifact, passing the **full** updated markdown — never a diff. The tool
+  captures the content in a closure; `runAgentTurn` surfaces it as
+  `result.artifact`, and the renderer flushes it to disk via the existing
+  `writeArtifact` path ([App.tsx:122-127](src/renderer/App.tsx#L122-L127)).
+  If the user's message is a pure question, the agent skips the tool and the
+  artifact file on disk is untouched.
+
+The agent's final assistant message is returned verbatim as the chat `reply`.
+There is no XML fencing — the old `<artifact>` / `<reply>` protocol has been
+replaced end-to-end by the `update_artifact` tool call.
 
 ### 1. Spec phase
 
 - **What you see:** the `spec.md` markdown editor on the left and a chat panel on the right ([PhaseView.tsx:13-23](src/renderer/PhaseView.tsx#L13-L23)).
 - **Code is hidden.** The implementation tab is not even reachable.
-- **Chatbot job** (system prompt at [agent.ts:30-39](src/main/agent.ts#L30-L39)):
+- **Chatbot job** (system prompt at [agent.ts:36-45](src/main/agent.ts#L36-L45)):
   - Produce a clear, structured Specification in markdown.
   - Cover goals, user-visible behavior, constraints, and non-goals.
   - **Do not** include implementation details, user stories, or code.
@@ -59,22 +168,22 @@ emit the FULL artifact, not a diff** ([agent.ts:83](src/main/agent.ts#L83)).
 ### 2. User Story phase
 
 - **What you see:** the `user-stories.md` editor + chat ([PhaseView.tsx:24-34](src/renderer/PhaseView.tsx#L24-L34)).
-- **Chatbot job** (prompt at [agent.ts:42-47](src/main/agent.ts#L42-L47)):
+- **Chatbot job** (prompt at [agent.ts:46-53](src/main/agent.ts#L46-L53)):
   - Derive **User Stories** from the Spec in standard form
     `- As a <role>, I want <capability>, so that <value>.`
   - One story per bullet, grouped under `## Epic: …` headings.
 - **Context fed in:** the Spec is included in the system prompt as reference
-  ([agent.ts:87](src/main/agent.ts#L87)) so the model can re-derive consistently.
+  ([agent.ts:99](src/main/agent.ts#L99)) so the model can re-derive consistently.
 
 ### 3. Technical Story phase
 
 - **What you see:** the `technical-stories.md` editor + chat ([PhaseView.tsx:35-45](src/renderer/PhaseView.tsx#L35-L45)).
-- **Chatbot job** (prompt at [agent.ts:51-55](src/main/agent.ts#L51-L55)):
+- **Chatbot job** (prompt at [agent.ts:55-62](src/main/agent.ts#L55-L62)):
   - Derive **Technical Stories** from the User Stories.
   - Each story has an ID (`TS-1`, `TS-2`, …), a one-line title, a short
     description, and acceptance criteria.
   - Stories must be small and self-contained — each will become a sub-agent task.
-- **Context fed in:** Spec **and** User Stories ([agent.ts:88-89](src/main/agent.ts#L88-L89)).
+- **Context fed in:** Spec **and** User Stories ([agent.ts:100-105](src/main/agent.ts#L100-L105)).
 
 ### 4. Implementation phase
 
@@ -247,7 +356,7 @@ The app is a standard three-process Electron app:
 │  project.ts     git init, branch-per-spec, artifact read/write  │
 │  settings.ts    settings.json (provider config + agentMode)     │
 │  models.ts      Anthropic/OpenAI/Google/Ollama → BaseChatModel  │
-│  agent.ts       phase chatbot (XML-fenced artifact + reply)     │
+│  agent.ts       phase chatbot (FS tools + update_artifact tool) │
 │  subagent.ts    per-story decomposition / chat / task / tests   │
 │  test-loop.ts   discover → run → analyze → fix loop             │
 └─────────────────────────────────────────────────────────────────┘
@@ -297,7 +406,7 @@ so changing it in Settings takes effect on the next message.
 | File | Purpose |
 |---|---|
 | [main.ts](src/main/main.ts) | Creates the `BrowserWindow` and registers every `ipcMain.handle` for `project:*`, `spec:*`, `agent:*`, `subagent:*`, `testloop:*`, `settings:*`. Also rebroadcasts test-loop state to all renderer windows ([main.ts:139-143](src/main/main.ts#L139-L143)). |
-| [agent.ts](src/main/agent.ts) | The **phase chatbot**. Builds a per-phase system prompt ([agent.ts:68-103](src/main/agent.ts#L68-L103)), calls `createDeepAgent({ model, systemPrompt, tools })`, and parses the `<artifact>`/`<reply>` response. `invokeDeepAgent` ([agent.ts:156-175](src/main/agent.ts#L156-L175)) is also reused by `subagent.ts`-style call sites that need a stateless agent invocation. |
+| [agent.ts](src/main/agent.ts) | The **phase chatbot**. Builds a per-phase system prompt ([agent.ts:74-112](src/main/agent.ts#L74-L112)), constructs a deepagent with a `FilesystemBackend` rooted at the project root and a per-turn `update_artifact` tool ([agent.ts:143-188](src/main/agent.ts#L143-L188)), then returns `{ reply, artifact? }`. The artifact is populated only if the agent actually called `update_artifact` during the turn. |
 | [models.ts](src/main/models.ts) | Provider factory. Lazily ESM-imports `@langchain/anthropic`, `@langchain/openai`, `@langchain/google-genai`, or `@langchain/ollama` and returns a typed `BaseChatModel`. |
 | [project.ts](src/main/project.ts) | All filesystem + git work. `openProject` ensures a git repo and a `specs/` dir; `createSpec` slugifies the name, creates a `spec/<slug>` branch, writes the four empty artifact files plus `.specops.json`. `readArtifacts` / `writeArtifact` map artifact keys to filenames. |
 | [settings.ts](src/main/settings.ts) | Loads/saves `settings.json` from `app.getPath("userData")`, deep-merges it against the descriptor defaults, and caches the result. Exposes `getActiveProvider()` for agent code. |
@@ -315,13 +424,15 @@ so changing it in Settings takes effect on the next message.
 | File | Purpose |
 |---|---|
 | [main.tsx](src/renderer/main.tsx) | React entry point — mounts `<App />` into `index.html`. |
-| [App.tsx](src/renderer/App.tsx) | Top-level state holder: project, active spec, current phase, per-phase chat history, artifacts, settings. Owns the **debounced auto-save** of artifact edits ([App.tsx:84-102](src/renderer/App.tsx#L84-L102)) — a 300 ms timer per artifact key, force-flushed when the agent updates it. Renders the header (with HITL/YOLO toggle and provider button), the project bar, the phase nav, and either `PhaseView + Chat` (phases 1-3) or `ImplementationView` (phase 4). |
+| [index.html](src/renderer/index.html) | Minimal shell — loads `styles.css` and the bundled React entry. |
+| [styles.css](src/renderer/styles.css) | The entire design system: CSS variables (palette, type scale, radii) at `:root`, plus every reusable component class (`.btn`, `.chat-msg`, `.badge`, `.modal`, `.story-list`, etc.). See [Interface design](#interface-design) for the catalog. |
+| [App.tsx](src/renderer/App.tsx) | Top-level state holder: project, active spec, current phase, per-phase chat history, artifacts, settings. Owns the **debounced auto-save** of artifact edits ([App.tsx:84-102](src/renderer/App.tsx#L84-L102)) — a 300 ms timer per artifact key, force-flushed when the agent updates it. Renders the frameless header (brand, HITL/YOLO toggle, provider button, `<WindowControls />`), the project bar, the phase nav, and either `PhaseView + Chat` (phases 1-3) or `ImplementationView` (phase 4). |
 | [ProjectBar.tsx](src/renderer/ProjectBar.tsx) | Open project / list specs / create spec. |
 | [PhaseNav.tsx](src/renderer/PhaseNav.tsx) | Tab-style nav across the four phases, with locking based on `canAdvance` ([phases.ts:12-23](src/renderer/phases.ts#L12-L23)). |
 | [PhaseView.tsx](src/renderer/PhaseView.tsx) | The single-artifact editor for phases 1-3. Spec / User Stories / Technical Stories use the rich `MarkdownEditor`; the legacy code editor branch uses a plain `<textarea>`. |
 | [Chat.tsx](src/renderer/Chat.tsx) | The right-hand chat panel for phases 1-3. Stateless w.r.t. history (it’s passed from `App`). Submit on Enter, Shift+Enter for newline. |
 | [ImplementationView.tsx](src/renderer/ImplementationView.tsx) | The four-tab implementation workspace (`stories`, `integration`, `testloop`, `code`). Drives all `subagent:*` and `testloop:*` IPC calls and renders task lists, sub-agent chat per story, generated test previews, and the live test-loop status. |
-| [MarkdownEditor.tsx](src/renderer/MarkdownEditor.tsx) | Wrapper around `react-markdown-editor-lite` with `marked` for preview. |
+| [MarkdownEditor.tsx](src/renderer/MarkdownEditor.tsx) | Wrapper around `react-markdown-editor-lite` with `marked` for preview. Includes a scoped `<style>` block that retints the third-party editor against the shared CSS variables so it visually merges with the rest of the shell. |
 | [Settings.tsx](src/renderer/Settings.tsx) | The provider-configuration modal: pick provider, enter API key / base URL / model. Persists via `settings:save`. |
 | [phases.ts](src/renderer/phases.ts) | `Phase` enum, ordering, labels, `canAdvance`, `nextPhase` / `prevPhase`, and the renderer-side `Artifacts` type (mirrors `ArtifactFiles`). |
 | [user-stories.ts](src/renderer/user-stories.ts) | Markdown → `UserStory[]` parser used by the integration-test tab. |
