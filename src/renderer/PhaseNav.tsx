@@ -11,15 +11,7 @@ export function PhaseNav({ phase, artifacts, onSelect }: PhaseNavProps): JSX.Ele
   const currentIdx = PHASE_ORDER.indexOf(phase);
 
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: 4,
-        padding: 8,
-        borderBottom: "1px solid #2a2a2a",
-        background: "#101010",
-      }}
-    >
+    <div className="phasenav">
       {PHASE_ORDER.map((p, i) => {
         const active = p === phase;
         const reachable = i <= currentIdx || isReachable(p, artifacts);
@@ -28,18 +20,11 @@ export function PhaseNav({ phase, artifacts, onSelect }: PhaseNavProps): JSX.Ele
             key={p}
             disabled={!reachable}
             onClick={() => onSelect(p)}
-            style={{
-              background: active ? "#2b6cb0" : reachable ? "#1f1f1f" : "#181818",
-              color: active ? "white" : reachable ? "#ddd" : "#555",
-              border: "1px solid " + (active ? "#2b6cb0" : "#2a2a2a"),
-              borderRadius: 6,
-              padding: "6px 12px",
-              fontSize: 13,
-              cursor: reachable ? "pointer" : "not-allowed",
-            }}
-            title={reachable ? "" : "Complete previous phases to unlock"}
+            className={active ? "active" : ""}
+            title={reachable ? "" : "complete previous phases to unlock"}
           >
-            {i + 1}. {PHASE_LABEL[p]}
+            <span className="step-num">[{i + 1}]</span>
+            {PHASE_LABEL[p]}
           </button>
         );
       })}

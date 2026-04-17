@@ -38,6 +38,18 @@ const api: SpecOpsApi = {
   },
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
+  minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
+  toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
+  closeWindow: () => ipcRenderer.invoke("window:close"),
+  isWindowMaximized: () => ipcRenderer.invoke("window:is-maximized"),
+  onMaximizedChange: (callback: (maximized: boolean) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, maximized: boolean) =>
+      callback(maximized);
+    ipcRenderer.on("window:maximized", handler);
+    return () => {
+      ipcRenderer.removeListener("window:maximized", handler);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld("specops", api);

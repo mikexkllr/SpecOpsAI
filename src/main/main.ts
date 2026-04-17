@@ -46,6 +46,8 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
+    frame: false,
+    backgroundColor: "#0b0b0c",
     webPreferences: {
       preload: path.join(__dirname, "../preload/preload.js"),
       contextIsolation: true,
@@ -53,11 +55,18 @@ function createWindow(): void {
     },
   });
 
+  win.on("maximize", () => win.webContents.send("window:maximized", true));
+  win.on("unmaximize", () => win.webContents.send("window:maximized", false));
+
   if (isDev) {
     win.loadURL("http://localhost:5173");
   } else {
     win.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
+}
+
+function getFocusedWindow(): BrowserWindow | null {
+  return BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
 }
 
 function registerIpc(): void {
@@ -139,6 +148,17 @@ function registerIpc(): void {
   ipcMain.handle("settings:save", (_e, settings: AppSettings) =>
     saveSettings(settings),
   );
+
+  ipcMain.handle("window:minimize", () => getFocusedWindow()?.minimize());
+  ipcMain.handle("window:toggle-maximize", () => {
+    const win = getFocusedWindow();
+    if (!win) return false;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+    return win.isMaximized();
+  });
+  ipcMain.handle("window:close", () => getFocusedWindow()?.close());
+  ipcMain.handle("window:is-maximized", () => getFocusedWindow()?.isMaximized() ?? false);
 }
 
 app.whenReady().then(() => {

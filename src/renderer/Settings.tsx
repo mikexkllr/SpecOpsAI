@@ -23,7 +23,7 @@ export function Settings({ onClose, onSaved }: Props): JSX.Element {
   if (!settings) {
     return (
       <Overlay onClose={onClose}>
-        <div style={{ padding: 24 }}>Loading settings…</div>
+        <div className="modal" style={{ padding: 24 }}>loading settings…</div>
       </Overlay>
     );
   }
@@ -58,49 +58,22 @@ export function Settings({ onClose, onSaved }: Props): JSX.Element {
 
   return (
     <Overlay onClose={onClose}>
-      <div
-        style={{
-          width: 640,
-          maxHeight: "85vh",
-          background: "#151515",
-          border: "1px solid #2a2a2a",
-          borderRadius: 8,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            padding: "12px 16px",
-            borderBottom: "1px solid #2a2a2a",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <div style={{ fontWeight: 600 }}>Settings</div>
-          <button
-            onClick={onClose}
-            style={{
-              background: "transparent",
-              color: "#aaa",
-              border: "none",
-              fontSize: 18,
-              cursor: "pointer",
-            }}
-          >
+      <div className="modal">
+        <div className="modal-header">
+          <div className="modal-title">settings</div>
+          <button className="btn-icon" onClick={onClose} aria-label="close">
             ×
           </button>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", flex: 1, minHeight: 0 }}>
-          <div style={{ borderRight: "1px solid #2a2a2a", padding: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+        <div className="modal-body">
+          <div className="modal-side">
             {PROVIDER_DESCRIPTORS.map((d) => {
               const isActive = d.id === active;
               return (
                 <button
                   key={d.id}
+                  className={isActive ? "active" : ""}
                   onClick={() =>
                     setSettings({
                       ...settings,
@@ -116,27 +89,15 @@ export function Settings({ onClose, onSaved }: Props): JSX.Element {
                       },
                     })
                   }
-                  style={{
-                    background: isActive ? "#2b6cb0" : "transparent",
-                    color: isActive ? "white" : "#ddd",
-                    border: "1px solid " + (isActive ? "#2b6cb0" : "transparent"),
-                    textAlign: "left",
-                    padding: "8px 10px",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    fontSize: 13,
-                  }}
                 >
                   {d.label}
-                  {isActive && (
-                    <div style={{ fontSize: 10, opacity: 0.8, marginTop: 2 }}>active</div>
-                  )}
+                  {isActive && <span className="sub">active</span>}
                 </button>
               );
             })}
           </div>
 
-          <div style={{ padding: 16, overflowY: "auto", display: "flex", flexDirection: "column", gap: 20 }}>
+          <div className="modal-content">
             <ProviderForm
               cfg={
                 settings.providers[active] ?? {
@@ -158,41 +119,12 @@ export function Settings({ onClose, onSaved }: Props): JSX.Element {
           </div>
         </div>
 
-        <div
-          style={{
-            padding: "10px 16px",
-            borderTop: "1px solid #2a2a2a",
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 8,
-          }}
-        >
-          <button
-            onClick={onClose}
-            style={{
-              background: "#1e1e1e",
-              color: "#ddd",
-              border: "1px solid #333",
-              padding: "6px 14px",
-              borderRadius: 4,
-              cursor: "pointer",
-            }}
-          >
-            Cancel
+        <div className="modal-footer">
+          <button className="btn" onClick={onClose}>
+            cancel
           </button>
-          <button
-            onClick={save}
-            disabled={saving}
-            style={{
-              background: saving ? "#1e3a5a" : "#2a5cff",
-              color: "white",
-              border: "none",
-              padding: "6px 14px",
-              borderRadius: 4,
-              cursor: saving ? "not-allowed" : "pointer",
-            }}
-          >
-            {saving ? "Saving…" : "Save"}
+          <button className="btn btn-primary" onClick={save} disabled={saving}>
+            {saving ? "saving…" : "save"}
           </button>
         </div>
       </div>
@@ -209,19 +141,18 @@ function ProviderForm({
 }): JSX.Element {
   const d = PROVIDER_DESCRIPTORS.find((p) => p.id === cfg.id)!;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14, fontSize: 13 }}>
+    <div className="flex-col" style={{ gap: 14 }}>
       <div>
-        <div style={{ fontWeight: 600, fontSize: 14 }}>{d.label}</div>
-        <div style={{ opacity: 0.65, marginTop: 2 }}>{d.description}</div>
+        <div className="section-title">{d.label}</div>
+        <div className="section-subtitle">{d.description}</div>
       </div>
 
-      <Field label="Model">
+      <Field label="model">
         <input
           list={`models-${d.id}`}
           value={cfg.model}
           onChange={(e) => onChange({ model: e.target.value })}
           placeholder={d.defaultModel}
-          style={inputStyle}
         />
         <datalist id={`models-${d.id}`}>
           {d.suggestedModels.map((m) => (
@@ -231,24 +162,22 @@ function ProviderForm({
       </Field>
 
       {d.defaultBaseUrl !== undefined && (
-        <Field label="Base URL">
+        <Field label="base url">
           <input
             value={cfg.baseUrl ?? ""}
             onChange={(e) => onChange({ baseUrl: e.target.value })}
             placeholder={d.defaultBaseUrl}
-            style={inputStyle}
           />
         </Field>
       )}
 
       {d.needsApiKey && (
-        <Field label="API key">
+        <Field label="api key">
           <input
             type="password"
             value={cfg.apiKey ?? ""}
             onChange={(e) => onChange({ apiKey: e.target.value })}
             placeholder="stored on this device"
-            style={inputStyle}
           />
         </Field>
       )}
@@ -266,42 +195,32 @@ function AgentModeSection({
   const options: Array<{ id: AgentMode; label: string; description: string }> = [
     {
       id: "hitl",
-      label: "Human-in-the-Loop",
-      description: "Pause after each task for confirmation before continuing.",
+      label: "human-in-the-loop",
+      description: "pause after each task for confirmation before continuing",
     },
     {
       id: "yolo",
-      label: "YOLO (autonomous)",
-      description: "Run all pending tasks end-to-end without stopping — fit for unattended runs.",
+      label: "yolo · autonomous",
+      description: "run all pending tasks end-to-end without stopping — fit for unattended runs",
     },
   ];
   return (
-    <div style={{ borderTop: "1px solid #2a2a2a", paddingTop: 16 }}>
-      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>Agent mode</div>
-      <div style={{ opacity: 0.65, fontSize: 12, marginBottom: 10 }}>
-        Controls how sub-agents advance through Technical Story tasks.
+    <div className="divider-t" style={{ paddingTop: 18 }}>
+      <div className="section-title">agent mode</div>
+      <div className="section-subtitle">
+        controls how sub-agents advance through technical story tasks
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div className="flex-col" style={{ gap: 8, marginTop: 12 }}>
         {options.map((opt) => {
           const active = opt.id === mode;
           return (
             <button
               key={opt.id}
               onClick={() => onChange(opt.id)}
-              style={{
-                textAlign: "left",
-                background: active ? "#1e3a5a" : "#1a1a1a",
-                border: "1px solid " + (active ? "#2b6cb0" : "#333"),
-                color: "#e6e6e6",
-                borderRadius: 6,
-                padding: "8px 10px",
-                cursor: "pointer",
-              }}
+              className={`option-card${active ? " active" : ""}`}
             >
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{opt.label}</div>
-              <div style={{ fontSize: 12, opacity: 0.75, marginTop: 2 }}>
-                {opt.description}
-              </div>
+              <div className="opt-title">{opt.label}</div>
+              <div className="opt-desc">{opt.description}</div>
             </button>
           );
         })}
@@ -310,21 +229,10 @@ function AgentModeSection({
   );
 }
 
-const inputStyle: React.CSSProperties = {
-  background: "#1a1a1a",
-  color: "#e6e6e6",
-  border: "1px solid #333",
-  borderRadius: 4,
-  padding: "6px 8px",
-  fontSize: 13,
-  width: "100%",
-  boxSizing: "border-box",
-};
-
 function Field({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <span style={{ opacity: 0.7, fontSize: 12 }}>{label}</span>
+    <label className="field">
+      <span className="field-label">{label}</span>
       {children}
     </label>
   );
@@ -332,18 +240,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function Overlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }): JSX.Element {
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.6)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 100,
-      }}
-    >
+    <div className="overlay" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()}>{children}</div>
     </div>
   );

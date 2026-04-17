@@ -145,31 +145,20 @@ export function App(): JSX.Element {
   const ready = !!activeSpec;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        background: "#0d0d0d",
-        color: "#e6e6e6",
-        fontFamily: "system-ui, -apple-system, sans-serif",
-      }}
-    >
-      <header
-        style={{
-          padding: "8px 16px",
-          borderBottom: "1px solid #2a2a2a",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <div style={{ fontWeight: 600 }}>SpecOps AI</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ fontSize: 12, opacity: 0.6 }}>
+    <div className="app">
+      <header className="app-header">
+        <div className="brand">
+          <span className="glyph">▸</span>
+          <span className="name">
+            specops<span className="dim">.ai</span>
+          </span>
+        </div>
+        <div className="header-meta">
+          <div className="header-status">
+            <span className="dot" />
             {activeSpec
               ? `${activeSpec.name} · ${activeSpec.branch}`
-              : "Spec-Driven Development IDE"}
+              : "spec-driven dev shell"}
           </div>
           <ModeToggle
             mode={settings?.agentMode ?? "hitl"}
@@ -183,20 +172,13 @@ export function App(): JSX.Element {
             }}
           />
           <button
+            className="btn btn-sm"
             onClick={() => setSettingsOpen(true)}
             title="Settings"
-            style={{
-              background: "#1e1e1e",
-              color: "#ddd",
-              border: "1px solid #333",
-              padding: "4px 10px",
-              borderRadius: 4,
-              cursor: "pointer",
-              fontSize: 12,
-            }}
           >
             {providerLabel(settings)}
           </button>
+          <WindowControls />
         </div>
       </header>
       {settingsOpen && (
@@ -219,7 +201,7 @@ export function App(): JSX.Element {
         <>
           <PhaseNav phase={phase} artifacts={artifacts} onSelect={setPhase} />
           {phase === "implementation" ? (
-            <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+            <div className="flex-1 flex-row">
               <ImplementationView
                 specPath={activeSpec.path}
                 artifacts={artifacts}
@@ -228,7 +210,14 @@ export function App(): JSX.Element {
               />
             </div>
           ) : (
-            <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 360px", minHeight: 0 }}>
+            <div
+              style={{
+                flex: 1,
+                display: "grid",
+                gridTemplateColumns: "1fr 380px",
+                minHeight: 0,
+              }}
+            >
               <PhaseView phase={phase} artifacts={artifacts} onChange={updateArtifacts} />
               <Chat
                 phase={phase}
@@ -260,17 +249,7 @@ function ModeToggle({
     { id: "yolo", label: "YOLO", hint: "Autonomous: run all tasks unattended" },
   ];
   return (
-    <div
-      style={{
-        display: "inline-flex",
-        border: "1px solid #333",
-        borderRadius: 4,
-        overflow: "hidden",
-        fontSize: 12,
-        opacity: disabled ? 0.5 : 1,
-      }}
-      title="Agent mode"
-    >
+    <div className={`mode-toggle${disabled ? " disabled" : ""}`} title="Agent mode">
       {modes.map((m) => {
         const active = m.id === mode;
         return (
@@ -279,14 +258,7 @@ function ModeToggle({
             onClick={() => onChange(m.id)}
             disabled={disabled}
             title={m.hint}
-            style={{
-              background: active ? (m.id === "yolo" ? "#7a4a00" : "#1e3a5a") : "#141414",
-              color: active ? "#fff" : "#aaa",
-              border: "none",
-              padding: "4px 10px",
-              cursor: disabled ? "not-allowed" : "pointer",
-              fontWeight: active ? 600 : 400,
-            }}
+            className={active ? `active ${m.id}` : ""}
           >
             {m.label}
           </button>
@@ -296,8 +268,53 @@ function ModeToggle({
   );
 }
 
+function WindowControls(): JSX.Element {
+  const [maximized, setMaximized] = useState(false);
+  useEffect(() => {
+    window.specops.isWindowMaximized().then(setMaximized);
+    return window.specops.onMaximizedChange(setMaximized);
+  }, []);
+  return (
+    <div className="window-controls">
+      <button
+        className="wc-btn"
+        onClick={() => window.specops.minimizeWindow()}
+        title="Minimize"
+        aria-label="Minimize"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" strokeWidth="1" /></svg>
+      </button>
+      <button
+        className="wc-btn"
+        onClick={() => window.specops.toggleMaximizeWindow()}
+        title={maximized ? "Restore" : "Maximize"}
+        aria-label={maximized ? "Restore" : "Maximize"}
+      >
+        {maximized ? (
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <rect x="0.5" y="2.5" width="7" height="7" stroke="currentColor" />
+            <path d="M2.5 2.5V0.5H9.5V7.5H7.5" stroke="currentColor" />
+          </svg>
+        ) : (
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <rect x="0.5" y="0.5" width="9" height="9" stroke="currentColor" />
+          </svg>
+        )}
+      </button>
+      <button
+        className="wc-btn wc-close"
+        onClick={() => window.specops.closeWindow()}
+        title="Close"
+        aria-label="Close"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 0L10 10M10 0L0 10" stroke="currentColor" strokeWidth="1" /></svg>
+      </button>
+    </div>
+  );
+}
+
 function providerLabel(settings: AppSettings | null): string {
-  if (!settings) return "⚙ Settings";
+  if (!settings) return "⚙ settings";
   const d = PROVIDER_DESCRIPTORS.find((p) => p.id === settings.activeProvider);
   const cfg = settings.providers[settings.activeProvider];
   const model = cfg?.model ?? d?.defaultModel ?? "";
@@ -312,35 +329,20 @@ function EmptyState({
   onOpen: () => void;
 }): JSX.Element {
   return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexDirection: "column",
-        gap: 12,
-        opacity: 0.8,
-      }}
-    >
-      <div style={{ fontSize: 15 }}>
+    <div className="empty-state">
+      <pre className="ascii">{`   ▗▄▖   ▗▄▄▖ ▗▄▄▄▖ ▗▄▄▖
+  ▐▌ ▐▌ ▐▌    ▐▌   ▐▌
+  ▐▛▀▜▌  ▝▀▚▖ ▐▛▀▘ ▐▌
+  ▐▌ ▐▌ ▗▄▄▞▘ ▐▌   ▝▚▄▄▖
+        spec-driven dev`}</pre>
+      <div className="msg">
         {hasProject
-          ? "Create a new spec to start the phase-based workflow."
-          : "Open a project folder to begin."}
+          ? "create a new spec to start the phase-based workflow"
+          : "open a project folder to begin"}
       </div>
       {!hasProject && (
-        <button
-          onClick={onOpen}
-          style={{
-            background: "#2a5cff",
-            color: "#fff",
-            border: "none",
-            padding: "8px 16px",
-            borderRadius: 4,
-            cursor: "pointer",
-          }}
-        >
-          Open project…
+        <button className="btn btn-primary" onClick={onOpen}>
+          ▸ open project
         </button>
       )}
     </div>

@@ -295,6 +295,11 @@ export interface SpecOpsApi {
   mergeToMain(specPath: string): Promise<MergeResult>;
   getSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<AppSettings>;
+  minimizeWindow(): Promise<void>;
+  toggleMaximizeWindow(): Promise<boolean>;
+  closeWindow(): Promise<void>;
+  isWindowMaximized(): Promise<boolean>;
+  onMaximizedChange(callback: (maximized: boolean) => void): () => void;
 }
 
 declare global {

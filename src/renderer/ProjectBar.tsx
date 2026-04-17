@@ -28,57 +28,29 @@ export function ProjectBar({
   }
 
   return (
-    <div
-      style={{
-        padding: "6px 16px",
-        borderBottom: "1px solid #2a2a2a",
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        fontSize: 13,
-        background: "#121212",
-      }}
-    >
-      <button
-        onClick={onOpenProject}
-        style={{
-          background: "#1e1e1e",
-          color: "#e6e6e6",
-          border: "1px solid #333",
-          padding: "4px 10px",
-          borderRadius: 4,
-          cursor: "pointer",
-        }}
-      >
-        {project ? "Change project" : "Open project…"}
+    <div className="projectbar">
+      <span className="prompt-prefix">$</span>
+      <button className="btn btn-sm" onClick={onOpenProject}>
+        {project ? "change project" : "open project…"}
       </button>
       {project && (
-        <span style={{ opacity: 0.7 }}>
-          <span style={{ opacity: 0.5 }}>Project:</span>{" "}
-          <span style={{ fontWeight: 600 }}>{project.name}</span>
-          <span style={{ opacity: 0.4, marginLeft: 6, fontSize: 11 }}>
-            {project.path}
-          </span>
-        </span>
+        <div className="project-info">
+          <span className="label">project</span>
+          <span className="name">{project.name}</span>
+          <span className="path">{project.path}</span>
+        </div>
       )}
       {project && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
+        <div className="right">
           <select
             value={activeSpec?.id ?? ""}
             onChange={(e) => {
               const s = project.specs.find((x) => x.id === e.target.value);
               if (s) onSelectSpec(s);
             }}
-            style={{
-              background: "#1e1e1e",
-              color: "#e6e6e6",
-              border: "1px solid #333",
-              padding: "4px 8px",
-              borderRadius: 4,
-            }}
           >
             <option value="" disabled>
-              {project.specs.length === 0 ? "No specs yet" : "Select a spec"}
+              {project.specs.length === 0 ? "no specs yet" : "select a spec"}
             </option>
             {project.specs.map((s) => (
               <option key={s.id} value={s.id}>
@@ -99,43 +71,16 @@ export function ProjectBar({
                     setName("");
                   }
                 }}
-                placeholder="Spec name"
-                style={{
-                  background: "#1e1e1e",
-                  color: "#e6e6e6",
-                  border: "1px solid #333",
-                  padding: "4px 8px",
-                  borderRadius: 4,
-                  width: 160,
-                }}
+                placeholder="spec name"
+                style={{ width: 180 }}
               />
-              <button
-                onClick={submitNew}
-                style={{
-                  background: "#2a5cff",
-                  color: "#fff",
-                  border: "none",
-                  padding: "4px 10px",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                }}
-              >
-                Create
+              <button className="btn btn-primary btn-sm" onClick={submitNew}>
+                create
               </button>
             </>
           ) : (
-            <button
-              onClick={() => setCreating(true)}
-              style={{
-                background: "#1e1e1e",
-                color: "#e6e6e6",
-                border: "1px solid #333",
-                padding: "4px 10px",
-                borderRadius: 4,
-                cursor: "pointer",
-              }}
-            >
-              + New spec
+            <button className="btn btn-sm" onClick={() => setCreating(true)}>
+              + new spec
             </button>
           )}
         </div>

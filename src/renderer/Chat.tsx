@@ -25,50 +25,24 @@ export function Chat({ phase, messages, onSend, pending }: ChatProps): JSX.Eleme
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", borderLeft: "1px solid #2a2a2a" }}>
-      <div style={{ padding: "8px 12px", borderBottom: "1px solid #2a2a2a", fontSize: 12, opacity: 0.7 }}>
-        Chat — {phase}
+    <div className="chat">
+      <div className="chat-header">
+        chat <span className="phase">› {phase}</span>
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+      <div className="chat-log">
         {messages.length === 0 && (
-          <div style={{ opacity: 0.5, fontSize: 13 }}>
-            Describe what you want. The agent will update the current artifact.
+          <div className="chat-empty">
+            describe what you want — the agent updates the current artifact
           </div>
         )}
         {messages.map((m, i) => (
-          <div
-            key={i}
-            style={{
-              alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-              background: m.role === "user" ? "#2b3a55" : "#23272e",
-              color: "#e6e6e6",
-              padding: "6px 10px",
-              borderRadius: 8,
-              maxWidth: "85%",
-              fontSize: 13,
-              whiteSpace: "pre-wrap",
-            }}
-          >
+          <div key={i} className={`chat-msg ${m.role}`}>
             {m.text}
           </div>
         ))}
-        {pending && (
-          <div
-            style={{
-              alignSelf: "flex-start",
-              background: "#23272e",
-              color: "#9aa",
-              padding: "6px 10px",
-              borderRadius: 8,
-              fontSize: 13,
-              fontStyle: "italic",
-            }}
-          >
-            Thinking…
-          </div>
-        )}
+        {pending && <div className="chat-msg thinking">thinking…</div>}
       </div>
-      <div style={{ display: "flex", gap: 6, padding: 8, borderTop: "1px solid #2a2a2a" }}>
+      <div className="chat-input-row">
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -78,35 +52,16 @@ export function Chat({ phase, messages, onSend, pending }: ChatProps): JSX.Eleme
               submit();
             }
           }}
-          placeholder={pending ? "Waiting for agent…" : "Message the agent…"}
+          placeholder={pending ? "waiting for agent…" : "message the agent…"}
           rows={2}
           disabled={pending}
-          style={{
-            flex: 1,
-            resize: "none",
-            background: "#1a1a1a",
-            color: "#ffffff",
-            border: "1px solid #333",
-            borderRadius: 6,
-            padding: 6,
-            fontFamily: "inherit",
-            fontSize: 13,
-            opacity: pending ? 0.6 : 1,
-          }}
         />
         <button
+          className="btn btn-primary"
           onClick={submit}
           disabled={pending}
-          style={{
-            background: pending ? "#1e3a5a" : "#2b6cb0",
-            color: "white",
-            border: "none",
-            borderRadius: 6,
-            padding: "0 14px",
-            cursor: pending ? "not-allowed" : "pointer",
-          }}
         >
-          Send
+          {pending ? "…" : "send ↵"}
         </button>
       </div>
     </div>

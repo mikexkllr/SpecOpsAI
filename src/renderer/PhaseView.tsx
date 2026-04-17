@@ -34,46 +34,54 @@ export function PhaseView({ phase, artifacts, onChange }: PhaseViewProps): JSX.E
   const refs = upstreamRefs(phase);
 
   return (
-    <div style={{ display: "flex", flexDirection: "row", height: "100%", minHeight: 0 }}>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+    <div className="flex-row" style={{ height: "100%", minHeight: 0 }}>
+      <div className="flex-col flex-1">
         {phase === "spec" && (
           <>
-            <EditorHeader title="Specification" subtitle="Describe what to build. Code is hidden until the Implementation phase." />
+            <EditorHeader
+              title="specification"
+              subtitle="describe what to build · code is hidden until the implementation phase"
+            />
             <MarkdownEditor
               value={artifacts.spec}
               onChange={(v) => onChange({ spec: v })}
-              placeholder="# Spec&#10;&#10;Goals, constraints, non-goals…"
+              placeholder="# spec&#10;&#10;goals, constraints, non-goals…"
             />
           </>
         )}
         {phase === "user-story" && (
           <>
-            <EditorHeader title="User Stories" subtitle="Derived from the Spec. Edit manually or via chat." />
+            <EditorHeader
+              title="user stories"
+              subtitle="derived from the spec · edit manually or via chat"
+            />
             <MarkdownEditor
               value={artifacts.userStories}
               onChange={(v) => onChange({ userStories: v })}
-              placeholder="- As a …, I want …, so that …"
+              placeholder="- as a …, i want …, so that …"
             />
           </>
         )}
         {phase === "technical-story" && (
           <>
-            <EditorHeader title="Technical Stories" subtitle="Derived from User Stories. Each becomes a sub-agent task." />
+            <EditorHeader
+              title="technical stories"
+              subtitle="derived from user stories · each becomes a sub-agent task"
+            />
             <MarkdownEditor
               value={artifacts.technicalStories}
               onChange={(v) => onChange({ technicalStories: v })}
-              placeholder="- [TS-1] Implement …"
+              placeholder="- [TS-1] implement …"
             />
           </>
         )}
         {phase === "implementation" && (
           <ArtifactEditor
-            title="Implementation"
-            subtitle="Minimal code editor. Visible only in this phase."
+            title="implementation"
+            subtitle="minimal code editor · visible only in this phase"
             value={artifacts.code}
             onChange={(v) => onChange({ code: v })}
             placeholder="// code"
-            monospace
           />
         )}
       </div>
@@ -84,9 +92,9 @@ export function PhaseView({ phase, artifacts, onChange }: PhaseViewProps): JSX.E
 
 function EditorHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
-    <div style={{ padding: "10px 16px", borderBottom: "1px solid #2a2a2a" }}>
-      <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
-      <div style={{ fontSize: 12, opacity: 0.65 }}>{subtitle}</div>
+    <div className="editor-header">
+      <div className="title">{title}</div>
+      <div className="subtitle">{subtitle}</div>
     </div>
   );
 }
@@ -97,32 +105,23 @@ interface EditorProps {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
-  monospace?: boolean;
 }
 
-function ArtifactEditor({ title, subtitle, value, onChange, placeholder, monospace }: EditorProps): JSX.Element {
+function ArtifactEditor({
+  title,
+  subtitle,
+  value,
+  onChange,
+  placeholder,
+}: EditorProps): JSX.Element {
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <div style={{ padding: "10px 16px", borderBottom: "1px solid #2a2a2a" }}>
-        <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
-        <div style={{ fontSize: 12, opacity: 0.65 }}>{subtitle}</div>
-      </div>
+    <div className="flex-col" style={{ height: "100%", overflow: "hidden" }}>
+      <EditorHeader title={title} subtitle={subtitle} />
       <textarea
+        className="code-editor"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        style={{
-          flex: 1,
-          background: "#141414",
-          color: "#ffffff",
-          border: "none",
-          outline: "none",
-          padding: 16,
-          resize: "none",
-          fontFamily: monospace ? "ui-monospace, Menlo, monospace" : "inherit",
-          fontSize: 13,
-          lineHeight: 1.5,
-        }}
       />
     </div>
   );
@@ -141,22 +140,11 @@ function ReferencesDrawer({
   if (!open) {
     return (
       <button
+        className="refs-collapsed"
         onClick={() => setOpen(true)}
-        title="Show upstream references (read-only)"
-        style={{
-          width: 28,
-          background: "#101418",
-          color: "#aaa",
-          border: "none",
-          borderLeft: "1px solid #2a2a2a",
-          cursor: "pointer",
-          writingMode: "vertical-rl",
-          textOrientation: "mixed",
-          fontSize: 11,
-          letterSpacing: 1,
-        }}
+        title="show upstream references (read-only)"
       >
-        ‹ References
+        ‹ references
       </button>
     );
   }
@@ -164,78 +152,33 @@ function ReferencesDrawer({
   const value = artifacts[active] ?? "";
 
   return (
-    <div
-      style={{
-        width: 320,
-        borderLeft: "1px solid #2a2a2a",
-        background: "#0f1115",
-        display: "flex",
-        flexDirection: "column",
-        minHeight: 0,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          padding: "6px 8px",
-          borderBottom: "1px solid #2a2a2a",
-        }}
-      >
-        <div style={{ fontSize: 11, opacity: 0.6, flex: 1 }}>References (read-only)</div>
+    <div className="refs-drawer">
+      <div className="refs-header">
+        <div className="label">references · read-only</div>
         <button
+          className="btn-icon"
           onClick={() => setOpen(false)}
-          title="Hide references"
-          style={{
-            background: "transparent",
-            color: "#888",
-            border: "none",
-            cursor: "pointer",
-            fontSize: 14,
-            padding: "0 4px",
-          }}
+          title="hide references"
         >
           ›
         </button>
       </div>
-      <div style={{ display: "flex", borderBottom: "1px solid #2a2a2a" }}>
+      <div className="refs-tabs">
         {refs.map((k) => {
           const isActive = k === active;
           return (
             <button
               key={k}
               onClick={() => setActive(k)}
-              style={{
-                background: isActive ? "#1a1f26" : "transparent",
-                color: isActive ? "#fff" : "#aaa",
-                border: "none",
-                borderBottom: isActive
-                  ? "2px solid #2b6cb0"
-                  : "2px solid transparent",
-                padding: "6px 10px",
-                fontSize: 11,
-                cursor: "pointer",
-              }}
+              className={isActive ? "active" : ""}
             >
               {REF_LABEL[k]}
             </button>
           );
         })}
       </div>
-      <div
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: 12,
-          fontSize: 12,
-          lineHeight: 1.5,
-          whiteSpace: "pre-wrap",
-          color: "#cfd6dd",
-          fontFamily: "ui-monospace, Menlo, monospace",
-        }}
-      >
-        {value.trim() ? value : <span style={{ opacity: 0.5 }}>(empty)</span>}
+      <div className="refs-content">
+        {value.trim() ? value : <span className="empty">(empty)</span>}
       </div>
     </div>
   );
