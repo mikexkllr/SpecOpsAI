@@ -75,20 +75,40 @@ function projectRoot(specPath: string): string {
   return path.resolve(specPath, "..", "..");
 }
 
-function buildSystemPrompt(phase: Phase, artifacts: ArtifactFiles): string {
+const ARTIFACT_FILENAMES: Record<keyof ArtifactFiles, string> = {
+  spec: "spec.md",
+  userStories: "user-stories.md",
+  technicalStories: "technical-stories.md",
+  code: "code.md",
+};
+
+function buildSystemPrompt(
+  phase: Phase,
+  artifacts: ArtifactFiles,
+  specPath: string,
+): string {
   const cfg = PHASE_CONFIG[phase];
+  const root = projectRoot(specPath);
+  const specRel = path.relative(root, specPath).replace(/\\/g, "/") || ".";
+  const artifactRel = `${specRel}/${ARTIFACT_FILENAMES[cfg.artifact]}`;
   const sections: string[] = [
     "You are the SpecOps AI agent, guiding a developer through Spec-Driven Development.",
     `Current phase: **${cfg.label}**.`,
     cfg.guidance,
     "",
-    "## Tools available to you",
-    "You have filesystem tools (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`) rooted at the PROJECT ROOT. Use them to ground your answers in the real codebase — look at `src/`, `package.json`, existing specs under `specs/`, etc. — before proposing or revising the artifact.",
-    `To persist the ${cfg.label} markdown, call the **\`update_artifact\`** tool with the FULL updated content (never a diff). Call it exactly once per turn when you intend to change the artifact. If the user's message is purely a question, SKIP the tool call and leave the artifact untouched.`,
+    "## Paths you care about",
+    `- Your filesystem tools are rooted at the **project root**: \`${root}\`.`,
+    `- This conversation's spec folder: \`${specRel}/\` — contains \`spec.md\`, \`user-stories.md\`, \`technical-stories.md\`, \`code.md\`.`,
+    `- The artifact you are editing in this phase: \`${artifactRel}\`.`,
+    "- Source code lives under `src/`. Dependencies in `package.json`. Other specs live alongside under `specs/`.",
+    "",
+    "## How to work",
+    "You have filesystem tools (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`) rooted at the project root. Use them to ground your answers — actually read the relevant files, actually grep for real symbols. Paths passed to tools are relative to the project root (e.g. `package.json`, `src/main/agent.ts`, or the spec path above).",
+    `To persist the ${cfg.label} markdown, call the \`update_artifact\` tool with the FULL updated content (never a diff). Call it exactly once per turn, and only when the user's message implies a change to the artifact. For pure questions, skip the call.`,
     phase === "implementation"
-      ? "You may also use `write_file` / `edit_file` to make direct source edits in this phase."
-      : "Do not edit files outside the current artifact via `write_file`; use `update_artifact` for the artifact itself.",
-    "After any tool calls, reply with 1–3 sentences describing what you changed or what you need from the user.",
+      ? "You may also edit source files directly with `write_file` / `edit_file` in this phase."
+      : "",
+    "Finish with a 1–3 sentence reply describing what you changed or what you need from the user. Never answer meta questions about your tools by listing them — just demonstrate by using them.",
     "",
     "## Context from earlier phases",
   ];
@@ -150,7 +170,7 @@ function lastAssistantText(result: unknown): string {
 
 export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurnResult> {
   const phaseCfg = PHASE_CONFIG[req.phase];
-  const system = buildSystemPrompt(req.phase, req.artifacts);
+  const system = buildSystemPrompt(req.phase, req.artifacts, req.specPath);
   const messages = toMessages(req.history, req.message);
 
   try {
