@@ -24,20 +24,25 @@ import type {
   GenerateUnitTestsRequest,
   GenerateUnitTestsResult,
   IntegrationTestFramework,
-  SubAgentChatRequest,
-  SubAgentDecomposeRequest,
-  SubAgentRunTaskRequest,
-  SubAgentState,
-  SubAgentStore,
   TaskChunk,
   TaskStatus,
   TechnicalStory,
   UserStory,
+  WorkerChatRequest,
+  WorkerDecomposeRequest,
+  WorkerRunTaskRequest,
+  WorkerState,
+  WorkerStore,
 } from "../shared/api";
 import { buildChatModel } from "./models";
 import { getActiveProvider } from "./settings";
+import {
+  workerSubagents,
+  workerSubagentsNoTestAuthor,
+} from "./workerSubagents";
 
-const STORE_FILE = path.join(".specops", "subagents.json");
+const STORE_FILE = path.join(".specops", "workers.json");
+const LEGACY_STORE_FILE = path.join(".specops", "subagents.json");
 
 function projectRoot(specPath: string): string {
   return path.resolve(specPath, "..", "..");
@@ -45,23 +50,43 @@ function projectRoot(specPath: string): string {
 
 type ChatMsg = { role: "user" | "assistant"; content: string };
 
-async function loadStore(specPath: string): Promise<SubAgentStore> {
+async function migrateLegacyStore(specPath: string): Promise<void> {
+  const newFile = path.join(specPath, STORE_FILE);
+  const oldFile = path.join(specPath, LEGACY_STORE_FILE);
+  try {
+    await fs.access(newFile);
+    return;
+  } catch {
+    // new file missing — check for legacy
+  }
+  try {
+    const raw = await fs.readFile(oldFile, "utf8");
+    await fs.mkdir(path.dirname(newFile), { recursive: true });
+    await fs.writeFile(newFile, raw, "utf8");
+    await fs.unlink(oldFile).catch(() => undefined);
+  } catch {
+    // no legacy file, nothing to do
+  }
+}
+
+async function loadStore(specPath: string): Promise<WorkerStore> {
+  await migrateLegacyStore(specPath);
   try {
     const raw = await fs.readFile(path.join(specPath, STORE_FILE), "utf8");
-    const parsed = JSON.parse(raw) as SubAgentStore;
+    const parsed = JSON.parse(raw) as WorkerStore;
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
   }
 }
 
-async function saveStore(specPath: string, store: SubAgentStore): Promise<void> {
+async function saveStore(specPath: string, store: WorkerStore): Promise<void> {
   const file = path.join(specPath, STORE_FILE);
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, JSON.stringify(store, null, 2), "utf8");
 }
 
-function emptyState(storyId: string): SubAgentState {
+function emptyState(storyId: string): WorkerState {
   return { storyId, tasks: [], messages: [], status: "idle" };
 }
 
@@ -126,16 +151,16 @@ function lastAssistantText(result: unknown): string {
   return "";
 }
 
-export async function readSubAgents(specPath: string): Promise<SubAgentStore> {
+export async function readWorkers(specPath: string): Promise<WorkerStore> {
   return loadStore(specPath);
 }
 
 export async function decomposeStory(
-  req: SubAgentDecomposeRequest,
-): Promise<SubAgentState> {
+  req: WorkerDecomposeRequest,
+): Promise<WorkerState> {
   const store = await loadStore(req.specPath);
   const prev = store[req.story.id] ?? emptyState(req.story.id);
-  const working: SubAgentState = { ...prev, status: "decomposing", error: undefined };
+  const working: WorkerState = { ...prev, status: "decomposing", error: undefined };
   store[req.story.id] = working;
   await saveStore(req.specPath, store);
 
@@ -172,6 +197,7 @@ export async function decomposeStory(
       model: await buildChatModel(cfg),
       systemPrompt: decompositionPrompt(req.story, req.artifacts),
       tools: [emitTasks],
+      subagents: workerSubagentsNoTestAuthor,
     });
     await agent.invoke({
       messages: [new HumanMessage("Decompose the story now by calling emit_tasks.")],
@@ -189,7 +215,7 @@ export async function decomposeStory(
     }));
     const existing = new Map(prev.tasks.map((t) => [t.id, t.status]));
     const merged = tasks.map((t) => ({ ...t, status: existing.get(t.id) ?? "pending" }));
-    const next: SubAgentState = {
+    const next: WorkerState = {
       storyId: req.story.id,
       tasks: merged,
       messages: prev.messages,
@@ -199,7 +225,7 @@ export async function decomposeStory(
     await saveStore(req.specPath, store);
     return next;
   } catch (err) {
-    const next: SubAgentState = {
+    const next: WorkerState = {
       ...prev,
       status: "idle",
       error: `Decomposition failed: ${(err as Error).message}`,
@@ -221,9 +247,10 @@ function chatSystemPrompt(
         .join("\n")
     : "(not decomposed yet — suggest decomposition if helpful)";
   return [
-    "You are a SUB-AGENT scoped to a single Technical Story.",
+    "You are a Worker scoped to a single Technical Story.",
     "Your context is isolated: do not discuss other stories. Keep responses concise and actionable.",
     "You have filesystem tools (ls, read_file, write_file, edit_file, glob, grep) rooted at the PROJECT ROOT — you can see and edit the full source tree (e.g. `src/`, `package.json`, `tests/`). The spec markdown lives under `specs/<id>/`.",
+    "You also have a built-in `task` tool that lets you spawn generic deepagents subagents — `plan`, `explore`, `test-author` — for context-isolated sub-work. Delegate large survey / planning / test-writing passes to them rather than inlining everything in your own context.",
     "Help implement the tasks below by ACTUALLY editing files with write_file / edit_file — do not just describe changes in prose.",
     "",
     contextSections(artifacts),
@@ -237,7 +264,7 @@ function chatSystemPrompt(
     .join("\n\n");
 }
 
-async function runStorySubAgent(
+async function runStoryWorker(
   specPath: string,
   system: string,
   history: ChatMsg[],
@@ -251,18 +278,19 @@ async function runStorySubAgent(
     model,
     systemPrompt: system,
     backend: new FilesystemBackend({ rootDir: projectRoot(specPath) }),
+    subagents: workerSubagents,
   });
   const result = await agent.invoke({ messages: lcMessages });
   return lastAssistantText(result) || "(no reply)";
 }
 
-export async function subAgentChat(
-  req: SubAgentChatRequest,
-): Promise<SubAgentState> {
+export async function workerChat(
+  req: WorkerChatRequest,
+): Promise<WorkerState> {
   const store = await loadStore(req.specPath);
   const prev = store[req.story.id] ?? emptyState(req.story.id);
   const userTurn = { role: "user" as const, text: req.message };
-  const working: SubAgentState = {
+  const working: WorkerState = {
     ...prev,
     messages: [...prev.messages, userTurn],
     status: "running",
@@ -277,8 +305,8 @@ export async function subAgentChat(
       role: m.role === "user" ? "user" : "assistant",
       content: m.text,
     }));
-    const reply = await runStorySubAgent(req.specPath, system, history, req.message);
-    const next: SubAgentState = {
+    const reply = await runStoryWorker(req.specPath, system, history, req.message);
+    const next: WorkerState = {
       ...working,
       messages: [...working.messages, { role: "agent", text: reply }],
       status: allDone(prev.tasks) ? "done" : "idle",
@@ -287,11 +315,11 @@ export async function subAgentChat(
     await saveStore(req.specPath, store);
     return next;
   } catch (err) {
-    const next: SubAgentState = {
+    const next: WorkerState = {
       ...working,
       messages: [
         ...working.messages,
-        { role: "agent", text: `Sub-agent error: ${(err as Error).message}` },
+        { role: "agent", text: `Worker error: ${(err as Error).message}` },
       ],
       status: "idle",
       error: (err as Error).message,
@@ -314,9 +342,9 @@ function taskPrompt(task: TaskChunk, story: TechnicalStory): string {
     .join("\n");
 }
 
-export async function runSubAgentTask(
-  req: SubAgentRunTaskRequest,
-): Promise<SubAgentState> {
+export async function runWorkerTask(
+  req: WorkerRunTaskRequest,
+): Promise<WorkerState> {
   const store = await loadStore(req.specPath);
   const prev = store[req.story.id] ?? emptyState(req.story.id);
   const task = prev.tasks.find((t) => t.id === req.taskId);
@@ -332,7 +360,7 @@ export async function runSubAgentTask(
   );
   const userTurnText = taskPrompt(task, req.story);
   const userTurn = { role: "user" as const, text: userTurnText };
-  const working: SubAgentState = {
+  const working: WorkerState = {
     ...prev,
     tasks: inProgressTasks,
     messages: [...prev.messages, userTurn],
@@ -348,13 +376,13 @@ export async function runSubAgentTask(
       role: m.role === "user" ? "user" : "assistant",
       content: m.text,
     }));
-    const reply = await runStorySubAgent(req.specPath, system, history, userTurnText);
+    const reply = await runStoryWorker(req.specPath, system, history, userTurnText);
     const finalTasks = req.autoComplete
       ? inProgressTasks.map((t) =>
           t.id === task.id ? { ...t, status: "done" as TaskStatus } : t,
         )
       : inProgressTasks;
-    const next: SubAgentState = {
+    const next: WorkerState = {
       ...working,
       tasks: finalTasks,
       messages: [...working.messages, { role: "agent", text: reply }],
@@ -364,12 +392,12 @@ export async function runSubAgentTask(
     await saveStore(req.specPath, store);
     return next;
   } catch (err) {
-    const next: SubAgentState = {
+    const next: WorkerState = {
       ...working,
       tasks: prev.tasks,
       messages: [
         ...working.messages,
-        { role: "agent", text: `Sub-agent error: ${(err as Error).message}` },
+        { role: "agent", text: `Worker error: ${(err as Error).message}` },
       ],
       status: "idle",
       error: (err as Error).message,
@@ -389,11 +417,11 @@ export async function updateTaskStatus(
   storyId: string,
   taskId: string,
   status: TaskStatus,
-): Promise<SubAgentState> {
+): Promise<WorkerState> {
   const store = await loadStore(specPath);
   const prev = store[storyId] ?? emptyState(storyId);
   const tasks = prev.tasks.map((t) => (t.id === taskId ? { ...t, status } : t));
-  const next: SubAgentState = {
+  const next: WorkerState = {
     ...prev,
     tasks,
     status: allDone(tasks) ? "done" : prev.status === "done" ? "idle" : prev.status,
@@ -418,8 +446,9 @@ function unitTestPrompt(
     ? tasks.map((t) => `- ${t.id} ${t.title} — ${t.description}`).join("\n")
     : "(no decomposed tasks — derive tests directly from the acceptance criteria)";
   return [
-    "You are a test-authoring sub-agent for ONE Technical Story.",
+    "You are a test-authoring Worker for ONE Technical Story.",
     "Generate a unit-test specification for the story and WRITE it to the file path below using your `write_file` tool.",
+    "You may delegate the focused writing pass to the `test-author` deepagents subagent via the built-in `task` tool if the story is large, but the final file must end up on disk at the target path.",
     "Tests must be derived strictly from the story's acceptance criteria and decomposed tasks — one `it(...)` per observable behavior.",
     "Include: a short preamble, `describe` blocks grouping behaviors, and concrete `it(...)` cases with Arrange/Act/Assert notes.",
     "Prefer framework-agnostic pseudocode unless the artifacts clearly indicate a stack (Jest/Vitest/etc). Mark assumptions explicitly.",
@@ -459,6 +488,7 @@ export async function generateUnitTests(
       model,
       systemPrompt: unitTestPrompt(req.story, tasks, req.artifacts, relPath),
       backend: new FilesystemBackend({ rootDir: root }),
+      subagents: workerSubagents,
     });
     const result = await agent.invoke({
       messages: [
@@ -477,7 +507,7 @@ export async function generateUnitTests(
         path: relPath,
         content: "",
         summary,
-        error: `Sub-agent did not write ${relPath}.`,
+        error: `Worker did not write ${relPath}.`,
       };
     }
     return { storyId: req.story.id, path: relPath, content, summary };
@@ -643,8 +673,9 @@ function integrationTestPrompt(
 ): string {
   const concrete = framework !== "generic";
   return [
-    "You are a test-authoring sub-agent generating INTEGRATION / end-to-end tests for ONE User Story.",
+    "You are a test-authoring Worker generating INTEGRATION / end-to-end tests for ONE User Story.",
     "Write the test specification to the file path below using your `write_file` tool.",
+    "You may delegate the focused writing pass to the `test-author` deepagents subagent via the built-in `task` tool, but the final file must be on disk at the target path.",
     "Integration tests must exercise the user-visible flow end to end — not internal units.",
     concrete
       ? `Each test must be a concrete, runnable ${framework} scenario.`
@@ -682,6 +713,7 @@ export async function generateIntegrationTests(
       model,
       systemPrompt: integrationTestPrompt(req.story, req.artifacts, relPath, framework),
       backend: new FilesystemBackend({ rootDir: root }),
+      subagents: workerSubagents,
     });
     const result = await agent.invoke({
       messages: [
@@ -701,7 +733,7 @@ export async function generateIntegrationTests(
         content: "",
         summary,
         framework,
-        error: `Sub-agent did not write ${relPath}.`,
+        error: `Worker did not write ${relPath}.`,
       };
     }
     return { storyId: req.story.id, path: relPath, content, summary, framework };
@@ -717,10 +749,10 @@ export async function generateIntegrationTests(
   }
 }
 
-export async function resetSubAgent(
+export async function resetWorker(
   specPath: string,
   storyId: string,
-): Promise<SubAgentStore> {
+): Promise<WorkerStore> {
   const store = await loadStore(specPath);
   delete store[storyId];
   await saveStore(specPath, store);

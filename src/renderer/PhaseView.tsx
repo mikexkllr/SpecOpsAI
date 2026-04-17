@@ -66,7 +66,7 @@ export function PhaseView({ phase, artifacts, onChange }: PhaseViewProps): JSX.E
           <>
             <EditorHeader
               title="technical stories"
-              subtitle="derived from user stories · each becomes a sub-agent task"
+              subtitle="derived from user stories · each becomes a Worker task"
             />
             <MarkdownEditor
               value={artifacts.technicalStories}

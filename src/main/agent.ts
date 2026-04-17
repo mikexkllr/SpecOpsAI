@@ -25,6 +25,7 @@ import type {
 } from "../shared/api";
 import { getActiveProvider } from "./settings";
 import { buildChatModel } from "./models";
+import { workerSubagents } from "./workerSubagents";
 
 interface PhaseConfig {
   artifact: keyof ArtifactFiles;
@@ -58,7 +59,7 @@ const PHASE_CONFIG: Record<Phase, PhaseConfig> = {
     guidance: [
       "Derive **Technical Stories** from the user stories.",
       "Each story: an ID (`TS-1`, `TS-2`…), a one-line title, a short description, and acceptance criteria.",
-      "These will each become a sub-agent task — keep them small and self-contained.",
+      "These will each become a Worker task — keep them small and self-contained.",
     ].join(" "),
   },
   implementation: {
@@ -66,7 +67,7 @@ const PHASE_CONFIG: Record<Phase, PhaseConfig> = {
     label: "Implementation",
     guidance: [
       "This phase implements the technical stories. Return code or scaffolding notes.",
-      "Sketch the implementation plan; the sub-agents will do the detailed per-story work.",
+      "Sketch the implementation plan; the Workers will do the detailed per-story work.",
     ].join(" "),
   },
 };
@@ -198,6 +199,7 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurnResu
       systemPrompt: system,
       backend: new FilesystemBackend({ rootDir: projectRoot(req.specPath) }),
       tools: [updateArtifact],
+      subagents: workerSubagents,
     });
     const result = await agent.invoke({ messages: lcMessages });
     const reply = lastAssistantText(result) || "(no reply)";

@@ -7,8 +7,8 @@ import type {
   IntegrationTestFramework,
   MergeCheckResult,
   MergeResult,
-  SubAgentState,
-  SubAgentStore,
+  WorkerState,
+  WorkerStore,
   TaskStatus,
   TechnicalStory,
   TestLoopState,
@@ -76,7 +76,7 @@ export function ImplementationView({
   );
   const [tab, setTab] = useState<Tab>("stories");
   const [selectedId, setSelectedId] = useState<string | null>(stories[0]?.id ?? null);
-  const [store, setStore] = useState<SubAgentStore>({});
+  const [store, setStore] = useState<WorkerStore>({});
   const [busy, setBusy] = useState<"decompose" | "chat" | "run" | "tests" | null>(
     null,
   );
@@ -103,7 +103,7 @@ export function ImplementationView({
   const stopRef = useRef(false);
 
   useEffect(() => {
-    window.specops.readSubAgents(specPath).then(setStore);
+    window.specops.readWorkers(specPath).then(setStore);
   }, [specPath]);
 
   useEffect(() => {
@@ -117,7 +117,7 @@ export function ImplementationView({
   }, []);
 
   const selectedStory = stories.find((s) => s.id === selectedId) ?? null;
-  const selectedState: SubAgentState | null = selectedId ? store[selectedId] ?? null : null;
+  const selectedState: WorkerState | null = selectedId ? store[selectedId] ?? null : null;
 
   async function decompose(): Promise<void> {
     if (!selectedStory || busy) return;
@@ -141,7 +141,7 @@ export function ImplementationView({
     setDraft("");
     setBusy("chat");
     try {
-      const state = await window.specops.subAgentChat({
+      const state = await window.specops.workerChat({
         specPath,
         story: selectedStory,
         artifacts: toApiArtifacts(artifacts),
@@ -196,7 +196,7 @@ export function ImplementationView({
 
   async function resetStory(): Promise<void> {
     if (!selectedStory) return;
-    const next = await window.specops.resetSubAgent(specPath, selectedStory.id);
+    const next = await window.specops.resetWorker(specPath, selectedStory.id);
     setStore(next);
     setPendingApproval(null);
   }
@@ -240,8 +240,8 @@ export function ImplementationView({
     story: TechnicalStory,
     taskId: string,
     autoComplete: boolean,
-  ): Promise<SubAgentState> {
-    const state = await window.specops.runSubAgentTask({
+  ): Promise<WorkerState> {
+    const state = await window.specops.runWorkerTask({
       specPath,
       story,
       artifacts: toApiArtifacts(artifacts),
@@ -260,7 +260,7 @@ export function ImplementationView({
     try {
       let state =
         store[selectedStory.id] ??
-        (await window.specops.readSubAgents(specPath).then((s) => {
+        (await window.specops.readWorkers(specPath).then((s) => {
           setStore(s);
           return s[selectedStory.id];
         }));
@@ -411,7 +411,7 @@ export function ImplementationView({
 
 function Tabs({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }): JSX.Element {
   const tabs: Array<{ id: Tab; label: string }> = [
-    { id: "stories", label: "sub-agents" },
+    { id: "stories", label: "workers" },
     { id: "integration", label: "integration tests" },
     { id: "testloop", label: "test loop" },
     { id: "code", label: "code notes" },
@@ -437,7 +437,7 @@ function EmptyStories(): JSX.Element {
       <div className="msg">
         no technical stories yet. go back to the technical stories phase and define
         some (<code className="inline">TS-1</code>, <code className="inline">TS-2</code>…)
-        so each can get its own sub-agent.
+        so each can get its own Worker.
       </div>
     </div>
   );
@@ -450,7 +450,7 @@ function StoryList({
   onSelect,
 }: {
   stories: TechnicalStory[];
-  store: SubAgentStore;
+  store: WorkerStore;
   selectedId: string | null;
   onSelect: (id: string) => void;
 }): JSX.Element {
@@ -476,9 +476,9 @@ function StoryList({
   );
 }
 
-function progressLabel(state: SubAgentState): string {
+function progressLabel(state: WorkerState): string {
   if (state.status === "decomposing") return "decomposing…";
-  if (state.status === "running") return "sub-agent thinking…";
+  if (state.status === "running") return "Worker thinking…";
   if (state.tasks.length === 0) return "no tasks yet";
   const done = state.tasks.filter((t) => t.status === "done").length;
   return `${done}/${state.tasks.length} done`;
@@ -504,7 +504,7 @@ function StoryWorkspace({
   tests,
 }: {
   story: TechnicalStory;
-  state: SubAgentState | null;
+  state: WorkerState | null;
   draft: string;
   setDraft: (v: string) => void;
   busy: "decompose" | "chat" | "run" | "tests" | null;
@@ -661,7 +661,7 @@ function StoryWorkspace({
             marginBottom: 8,
           }}
         >
-          sub-agent chat — isolated to <span style={{ color: "var(--accent)" }}>{story.id}</span>
+          Worker chat — isolated to <span style={{ color: "var(--accent)" }}>{story.id}</span>
         </div>
         {state?.messages.length ? (
           <>
@@ -673,7 +673,7 @@ function StoryWorkspace({
             {(busy === "chat" || busy === "run" || busy === "tests") && (
               <div className="chat-msg thinking">
                 {busy === "run"
-                  ? "sub-agent working…"
+                  ? "Worker working…"
                   : busy === "tests"
                     ? "generating unit tests…"
                     : "thinking…"}
@@ -681,7 +681,7 @@ function StoryWorkspace({
             )}
           </>
         ) : (
-          <div className="chat-empty">ask this sub-agent anything scoped to {story.id}</div>
+          <div className="chat-empty">ask this Worker anything scoped to {story.id}</div>
         )}
       </div>
       <div className="chat-input-row">
@@ -694,7 +694,7 @@ function StoryWorkspace({
               onSend();
             }
           }}
-          placeholder={busy === "chat" ? "waiting…" : `message the ${story.id} sub-agent…`}
+          placeholder={busy === "chat" ? "waiting…" : `message the ${story.id} Worker…`}
           rows={2}
           disabled={busy !== null}
         />
@@ -736,7 +736,7 @@ function IntegrationTestsPanel({
     <div style={{ flex: 1, overflowY: "auto", padding: 18 }}>
       <div style={{ fontSize: "var(--fs-sm)", color: "var(--fg-2)", marginBottom: 14 }}>
         integration tests are derived from user stories and saved under{" "}
-        <code className="inline">tests/integration/</code>. the sub-agent picks an
+        <code className="inline">tests/integration/</code>. the Worker picks an
         appropriate stack (Playwright, Flutter, XCUITest, Espresso) from your spec
         or writes framework-agnostic Given/When/Then scenarios.
       </div>

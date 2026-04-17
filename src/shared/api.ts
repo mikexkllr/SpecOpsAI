@@ -54,37 +54,37 @@ export interface TaskChunk {
   status: TaskStatus;
 }
 
-export interface SubAgentMessage {
+export interface WorkerMessage {
   role: "user" | "agent";
   text: string;
 }
 
-export type SubAgentStatus = "idle" | "decomposing" | "running" | "done";
+export type WorkerStatus = "idle" | "decomposing" | "running" | "done";
 
-export interface SubAgentState {
+export interface WorkerState {
   storyId: string;
   tasks: TaskChunk[];
-  messages: SubAgentMessage[];
-  status: SubAgentStatus;
+  messages: WorkerMessage[];
+  status: WorkerStatus;
   error?: string;
 }
 
-export type SubAgentStore = Record<string, SubAgentState>;
+export type WorkerStore = Record<string, WorkerState>;
 
-export interface SubAgentDecomposeRequest {
+export interface WorkerDecomposeRequest {
   specPath: string;
   story: TechnicalStory;
   artifacts: ArtifactFiles;
 }
 
-export interface SubAgentChatRequest {
+export interface WorkerChatRequest {
   specPath: string;
   story: TechnicalStory;
   artifacts: ArtifactFiles;
   message: string;
 }
 
-export interface SubAgentRunTaskRequest {
+export interface WorkerRunTaskRequest {
   specPath: string;
   story: TechnicalStory;
   artifacts: ArtifactFiles;
@@ -271,10 +271,10 @@ export interface SpecOpsApi {
     content: string,
   ): Promise<void>;
   agentChat(request: AgentTurnRequest): Promise<AgentTurnResult>;
-  readSubAgents(specPath: string): Promise<SubAgentStore>;
-  decomposeStory(request: SubAgentDecomposeRequest): Promise<SubAgentState>;
-  subAgentChat(request: SubAgentChatRequest): Promise<SubAgentState>;
-  runSubAgentTask(request: SubAgentRunTaskRequest): Promise<SubAgentState>;
+  readWorkers(specPath: string): Promise<WorkerStore>;
+  decomposeStory(request: WorkerDecomposeRequest): Promise<WorkerState>;
+  workerChat(request: WorkerChatRequest): Promise<WorkerState>;
+  runWorkerTask(request: WorkerRunTaskRequest): Promise<WorkerState>;
   generateUnitTests(
     request: GenerateUnitTestsRequest,
   ): Promise<GenerateUnitTestsResult>;
@@ -286,8 +286,8 @@ export interface SpecOpsApi {
     storyId: string,
     taskId: string,
     status: TaskStatus,
-  ): Promise<SubAgentState>;
-  resetSubAgent(specPath: string, storyId: string): Promise<SubAgentStore>;
+  ): Promise<WorkerState>;
+  resetWorker(specPath: string, storyId: string): Promise<WorkerStore>;
   startTestLoop(request: TestLoopRequest): Promise<void>;
   stopTestLoop(): Promise<void>;
   getTestLoopState(): Promise<TestLoopState>;

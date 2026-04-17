@@ -11,18 +11,18 @@ const api: SpecOpsApi = {
   writeArtifact: (specPath, artifact: keyof ArtifactFiles, content) =>
     ipcRenderer.invoke("spec:write", specPath, artifact, content),
   agentChat: (request) => ipcRenderer.invoke("agent:chat", request),
-  readSubAgents: (specPath) => ipcRenderer.invoke("subagent:read", specPath),
-  decomposeStory: (request) => ipcRenderer.invoke("subagent:decompose", request),
-  subAgentChat: (request) => ipcRenderer.invoke("subagent:chat", request),
-  runSubAgentTask: (request) => ipcRenderer.invoke("subagent:run-task", request),
+  readWorkers: (specPath) => ipcRenderer.invoke("worker:read", specPath),
+  decomposeStory: (request) => ipcRenderer.invoke("worker:decompose", request),
+  workerChat: (request) => ipcRenderer.invoke("worker:chat", request),
+  runWorkerTask: (request) => ipcRenderer.invoke("worker:run-task", request),
   updateTaskStatus: (specPath, storyId, taskId, status) =>
-    ipcRenderer.invoke("subagent:update-task", specPath, storyId, taskId, status),
-  resetSubAgent: (specPath, storyId) =>
-    ipcRenderer.invoke("subagent:reset", specPath, storyId),
+    ipcRenderer.invoke("worker:update-task", specPath, storyId, taskId, status),
+  resetWorker: (specPath, storyId) =>
+    ipcRenderer.invoke("worker:reset", specPath, storyId),
   generateUnitTests: (request) =>
-    ipcRenderer.invoke("subagent:generate-unit-tests", request),
+    ipcRenderer.invoke("worker:generate-unit-tests", request),
   generateIntegrationTests: (request) =>
-    ipcRenderer.invoke("subagent:generate-integration-tests", request),
+    ipcRenderer.invoke("worker:generate-integration-tests", request),
   startTestLoop: (request) => ipcRenderer.invoke("testloop:start", request),
   stopTestLoop: () => ipcRenderer.invoke("testloop:stop"),
   getTestLoopState: () => ipcRenderer.invoke("testloop:state"),

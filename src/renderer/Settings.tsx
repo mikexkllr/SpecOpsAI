@@ -208,7 +208,7 @@ function AgentModeSection({
     <div className="divider-t" style={{ paddingTop: 18 }}>
       <div className="section-title">agent mode</div>
       <div className="section-subtitle">
-        controls how sub-agents advance through technical story tasks
+        controls how Workers advance through technical story tasks
       </div>
       <div className="flex-col" style={{ gap: 8, marginTop: 12 }}>
         {options.map((opt) => {

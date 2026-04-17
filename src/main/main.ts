@@ -6,11 +6,11 @@ import type {
   ArtifactFiles,
   GenerateIntegrationTestsRequest,
   GenerateUnitTestsRequest,
-  SubAgentChatRequest,
-  SubAgentDecomposeRequest,
-  SubAgentRunTaskRequest,
   TaskStatus,
   TestLoopRequest,
+  WorkerChatRequest,
+  WorkerDecomposeRequest,
+  WorkerRunTaskRequest,
 } from "../shared/api";
 import { runAgentTurn } from "./agent";
 import {
@@ -27,12 +27,12 @@ import {
   decomposeStory,
   generateIntegrationTests,
   generateUnitTests,
-  readSubAgents,
-  resetSubAgent,
-  runSubAgentTask,
-  subAgentChat,
+  readWorkers,
+  resetWorker,
+  runWorkerTask,
   updateTaskStatus,
-} from "./subagent";
+  workerChat,
+} from "./worker";
 import {
   getTestLoopState,
   onTestLoopUpdate,
@@ -100,33 +100,33 @@ function registerIpc(): void {
     runAgentTurn(request),
   );
 
-  ipcMain.handle("subagent:read", (_e, specPath: string) =>
-    readSubAgents(specPath),
+  ipcMain.handle("worker:read", (_e, specPath: string) =>
+    readWorkers(specPath),
   );
   ipcMain.handle(
-    "subagent:decompose",
-    (_e, request: SubAgentDecomposeRequest) => decomposeStory(request),
+    "worker:decompose",
+    (_e, request: WorkerDecomposeRequest) => decomposeStory(request),
   );
-  ipcMain.handle("subagent:chat", (_e, request: SubAgentChatRequest) =>
-    subAgentChat(request),
+  ipcMain.handle("worker:chat", (_e, request: WorkerChatRequest) =>
+    workerChat(request),
   );
-  ipcMain.handle("subagent:run-task", (_e, request: SubAgentRunTaskRequest) =>
-    runSubAgentTask(request),
+  ipcMain.handle("worker:run-task", (_e, request: WorkerRunTaskRequest) =>
+    runWorkerTask(request),
   );
   ipcMain.handle(
-    "subagent:update-task",
+    "worker:update-task",
     (_e, specPath: string, storyId: string, taskId: string, status: TaskStatus) =>
       updateTaskStatus(specPath, storyId, taskId, status),
   );
-  ipcMain.handle("subagent:reset", (_e, specPath: string, storyId: string) =>
-    resetSubAgent(specPath, storyId),
+  ipcMain.handle("worker:reset", (_e, specPath: string, storyId: string) =>
+    resetWorker(specPath, storyId),
   );
   ipcMain.handle(
-    "subagent:generate-unit-tests",
+    "worker:generate-unit-tests",
     (_e, request: GenerateUnitTestsRequest) => generateUnitTests(request),
   );
   ipcMain.handle(
-    "subagent:generate-integration-tests",
+    "worker:generate-integration-tests",
     (_e, request: GenerateIntegrationTestsRequest) =>
       generateIntegrationTests(request),
   );

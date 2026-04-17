@@ -4,9 +4,16 @@ A desktop IDE for **Spec-Driven Development** with an integrated AI agent harnes
 built on [`deepagents`](https://www.npmjs.com/package/deepagents) (LangChain).
 The app forces the developer through four ordered phases — Spec → User Stories →
 Technical Stories → Implementation — and only unlocks the code editor in the
-last phase. Every chat, sub-agent and test-loop runs through the same agent
+last phase. Every chat, Worker and test-loop runs through the same agent
 harness, against any of four configurable model providers
 (Anthropic, OpenAI, Google Gemini, or local Ollama).
+
+> **Terminology note.** In this repo, a **Worker** is our ephemeral per-story /
+> per-task deep-agent instance. It is *not* the same thing as a deepagents
+> `SubAgent`. A deepagents `SubAgent` is the generic primitive the library
+> exposes (`plan`, `explore`, `test-author`) that a Worker spawns internally
+> via the built-in `task` tool for context-isolated sub-work. Read this
+> paragraph every time the two words blur together.
 
 ---
 
@@ -92,9 +99,9 @@ All styling is class-driven. The reusable classes, all defined in
 | `.phasenav` (+ `.step-num`, `.active`) | Phase tabs with step numbers in `[1]` brackets. |
 | `.editor-header` (+ `.title`, `.subtitle`) | The `▸ title / subtitle` header above each artifact editor. |
 | `.code-editor` | The monospace textarea used for the legacy code view. |
-| `.chat`, `.chat-header`, `.chat-log`, `.chat-msg.user / .agent / .thinking`, `.chat-input-row`, `.chat-empty` | All chat surfaces — phase chat and sub-agent chat both use these. |
+| `.chat`, `.chat-header`, `.chat-log`, `.chat-msg.user / .agent / .thinking`, `.chat-input-row`, `.chat-empty` | All chat surfaces — phase chat and Worker chat both use these. |
 | `.refs-collapsed`, `.refs-drawer`, `.refs-header`, `.refs-tabs`, `.refs-content` | Upstream-references side drawer. |
-| `.tabs` | The implementation-view tab strip (`sub-agents / integration tests / test loop / code notes`). |
+| `.tabs` | The implementation-view tab strip (`workers / integration tests / test loop / code notes`). |
 | `.story-list` (+ `.story-id`, `.story-title`, `.story-meta`) | Left sidebar of decomposable stories. Active item gets a coral left border. |
 | `.story-workspace`, `.story-head`, `.story-toolbar`, `.task-list`, `.task-item` (+ `.task-status.pending / .in-progress / .done`) | Per-story workspace — head, action toolbar, decomposed task list. |
 | `.badge.hitl / .yolo / .ok / .warn / .danger / .info / .magenta` | Uppercase mono pills used for framework labels, iteration results, and mode indicators. |
@@ -137,7 +144,7 @@ Two capabilities are wired into every phase chatbot:
 - **Real codebase access.** Each turn builds a `FilesystemBackend` rooted at
   the project root ([agent.ts:170](src/main/agent.ts#L170)), giving the agent
   `ls`, `read_file`, `write_file`, `edit_file`, `glob`, and `grep` over the
-  entire repo. This is the same backend the per-story sub-agent chat uses,
+  entire repo. This is the same backend the per-story Worker chat uses,
   so the phase agent can ground its spec/story revisions in the real code
   (e.g. grep for IPC channels before writing a spec section about them).
 - **`update_artifact` tool.** A structured tool (zod schema `{ content: string }`)
@@ -182,7 +189,7 @@ replaced end-to-end by the `update_artifact` tool call.
   - Derive **Technical Stories** from the User Stories.
   - Each story has an ID (`TS-1`, `TS-2`, …), a one-line title, a short
     description, and acceptance criteria.
-  - Stories must be small and self-contained — each will become a sub-agent task.
+  - Stories must be small and self-contained — each will become a Worker task.
 - **Context fed in:** Spec **and** User Stories ([agent.ts:100-105](src/main/agent.ts#L100-L105)).
 
 ### 4. Implementation phase
@@ -192,7 +199,7 @@ richest UI. It does **not** use `PhaseView` — it switches to the
 [`ImplementationView`](src/renderer/ImplementationView.tsx) component
 ([App.tsx:221-229](src/renderer/App.tsx#L221-L229)), which exposes four tabs:
 
-- **`stories`** — the per-story sub-agent workspace.
+- **`workers`** — the per-story Worker workspace.
 - **`integration`** — integration-test generation per User Story.
 - **`testloop`** — the autonomous test-fix loop.
 - **`code`** — a minimal markdown/code editor for `code.md`.
@@ -201,27 +208,25 @@ For each Technical Story (parsed from `technical-stories.md` via
 [`parseTechnicalStories`](src/renderer/technical-stories.ts)) the agent can:
 
 1. **Decompose the story** — call
-   [`decomposeStory`](src/main/subagent.ts#L133-L211).
-   A deepagent is given a `emit_tasks` tool whose schema
-   ([subagent.ts:153-166](src/main/subagent.ts#L153-L166)) requires 2-8 task
-   chunks with `{id, title, description}`. The chunks are stored in
-   `<spec>/.specops/subagents.json`.
-2. **Chat with a sub-agent** scoped to that one story
-   ([`subAgentChat`](src/main/subagent.ts#L259-L303)). The sub-agent has a
-   completely separate context window and is given **real filesystem tools**
-   (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`) rooted at the
-   project root via deepagents’ `FilesystemBackend`
-   ([subagent.ts:247-253](src/main/subagent.ts#L247-L253)). It is instructed to
-   actually edit files, not describe edits in prose
-   ([subagent.ts:226-228](src/main/subagent.ts#L226-L228)).
-3. **Run a single decomposed task** — `runSubAgentTask`
-   ([subagent.ts:317-381](src/main/subagent.ts#L317-L381)) prompts the sub-agent
-   with a focused per-task message ([subagent.ts:305-315](src/main/subagent.ts#L305-L315))
-   and optionally auto-marks the task as `done` (`autoComplete=true` in YOLO mode).
+   [`decomposeStory`](src/main/worker.ts). A Worker is given an `emit_tasks`
+   tool requiring 2–8 task chunks with `{id, title, description}`. The chunks
+   are stored in `<spec>/.specops/workers.json` (legacy `subagents.json` files
+   are auto-migrated on read).
+2. **Chat with a Worker** scoped to that one story
+   ([`workerChat`](src/main/worker.ts)). The Worker has a completely separate
+   context window and is given **real filesystem tools** (`ls`, `read_file`,
+   `write_file`, `edit_file`, `glob`, `grep`) rooted at the project root via
+   deepagents' `FilesystemBackend`. It is also wired with the generic
+   deepagents `SubAgent`s (`plan`, `explore`, `test-author`) so it can delegate
+   survey / planning / test-writing passes through the built-in `task` tool
+   for context isolation.
+3. **Run a single decomposed task** — [`runWorkerTask`](src/main/worker.ts)
+   prompts the Worker with a focused per-task message and optionally
+   auto-marks the task as `done` (`autoComplete=true` in YOLO mode).
 4. **Generate unit tests** for the story
-   ([`generateUnitTests`](src/main/subagent.ts#L443-L493)).
+   ([`generateUnitTests`](src/main/worker.ts)).
 5. **Generate integration tests** for any User Story
-   ([`generateIntegrationTests`](src/main/subagent.ts#L596-L646)).
+   ([`generateIntegrationTests`](src/main/worker.ts)).
 6. **Start the autonomous test loop** — see [Testing system](#testing-system).
 
 ---
@@ -233,13 +238,13 @@ The mode is a single setting (`agentMode`) saved in `settings.json`
 ([App.tsx:174-184](src/renderer/App.tsx#L174-L184)).
 
 - **HITL — Human-in-the-loop (default).** Each Technical Story task has to be
-  approved before the sub-agent runs it. Status flips: `pending →
+  approved before the Worker runs it. Status flips: `pending →
   in-progress` only when you click; the agent must pause for explicit
   confirmation in the UI before touching files.
 - **YOLO — Autonomous.** The Implementation view can chain through every
   decomposed task of every story without confirmation, marking each as `done`
-  when the sub-agent reply comes back (`autoComplete=true` is forwarded to
-  [`runSubAgentTask`](src/main/subagent.ts#L317-L381)). Designed for unattended
+  when the Worker reply comes back (`autoComplete=true` is forwarded to
+  [`runWorkerTask`](src/main/worker.ts)). Designed for unattended
   overnight runs.
 
 The mode is read by `ImplementationView` and used to decide whether to gate
@@ -251,23 +256,23 @@ runs behind `pendingApproval`
 ## Testing system
 
 ### Unit tests
-- Generated **per Technical Story** by [`generateUnitTests`](src/main/subagent.ts#L443-L493).
-- Output path: `tests/unit/<storyId>.test.md`
-  ([subagent.ts:406-409](src/main/subagent.ts#L406-L409)).
-- The sub-agent gets `write_file` access via `FilesystemBackend` and is
+- Generated **per Technical Story** by [`generateUnitTests`](src/main/worker.ts).
+- Output path: `tests/unit/<storyId>.test.md`.
+- The Worker gets `write_file` access via `FilesystemBackend` and is
   instructed to write the test spec **itself**, then reply with a one-sentence
-  summary ([subagent.ts:411-441](src/main/subagent.ts#L411-L441)).
+  summary. It may delegate the focused authoring pass to the generic
+  `test-author` deepagents `SubAgent` via the built-in `task` tool.
 
 ### Integration tests
-- Generated **per User Story** by [`generateIntegrationTests`](src/main/subagent.ts#L596-L646).
-- Framework auto-detection ([subagent.ts:495-501](src/main/subagent.ts#L495-L501)):
+- Generated **per User Story** by [`generateIntegrationTests`](src/main/worker.ts).
+- Framework auto-detection:
   - regex hits on `react|next.js|vue|svelte|angular|web app|browser|playwright`
     → **Playwright** (TypeScript) → output at `tests/integration/<storyId>.spec.ts`.
   - otherwise → **generic** Given/When/Then markdown at
     `tests/integration/<storyId>.test.md`.
-- The Playwright prompt section ([subagent.ts:542-557](src/main/subagent.ts#L542-L557))
-  hard-constrains the agent to import only `@playwright/test`, use semantic
-  locators, and emit valid TypeScript that passes `tsc --noEmit`.
+- The Playwright prompt section hard-constrains the agent to import only
+  `@playwright/test`, use semantic locators, and emit valid TypeScript that
+  passes `tsc --noEmit`.
 
 ### Autonomous test loop
 Implemented in [`test-loop.ts`](src/main/test-loop.ts). Lifecycle:
@@ -282,7 +287,7 @@ Implemented in [`test-loop.ts`](src/main/test-loop.ts). Lifecycle:
 3. **If anything failed, run the fix-agent** ([test-loop.ts:219-264](src/main/test-loop.ts#L219-L264)).
    The agent is given a `verdict` tool (`fix-code | fix-test`) that it must
    call exactly once before applying any change, plus the same filesystem tools
-   as the sub-agents. Decision rules ([test-loop.ts:198-202](src/main/test-loop.ts#L198-L202)):
+   as the Workers. Decision rules ([test-loop.ts:198-202](src/main/test-loop.ts#L198-L202)):
    - test matches the Spec → fix the **code**
    - test contradicts the Spec → fix the **test**
 4. Repeat for up to `maxIterations` (default 5,
@@ -310,7 +315,7 @@ spec lives in its own folder with its own git branch:
 │   ├── my-first-spec/              # one folder per spec
 │   │   ├── .specops.json           # SpecInfo metadata (id, name, branch, createdAt)
 │   │   ├── .specops/
-│   │   │   └── subagents.json      # decomposed tasks + chat history per story
+│   │   │   └── workers.json        # decomposed tasks + chat history per story (auto-migrated from subagents.json)
 │   │   ├── spec.md
 │   │   ├── user-stories.md
 │   │   ├── technical-stories.md
@@ -349,7 +354,7 @@ The app is a standard three-process Electron app:
 │   thin ipcRenderer.invoke wrappers + onTestLoopUpdate listener  │
 └────────────────────────────┬────────────────────────────────────┘
                              │ ipcMain.handle (project:*, agent:*,│
-                             │ subagent:*, testloop:*, settings:*)│
+                             │ worker:*, testloop:*, settings:*)  │
 ┌────────────────────────────┴────────────────────────────────────┐
 │ Main  (Node, Electron)                                          │
 │  main.ts        IPC wiring + window creation                    │
@@ -357,7 +362,8 @@ The app is a standard three-process Electron app:
 │  settings.ts    settings.json (provider config + agentMode)     │
 │  models.ts      Anthropic/OpenAI/Google/Ollama → BaseChatModel  │
 │  agent.ts       phase chatbot (FS tools + update_artifact tool) │
-│  subagent.ts    per-story decomposition / chat / task / tests   │
+│  worker.ts      per-story decomposition / chat / task / tests   │
+│  workerSubagents.ts generic deepagents SubAgents (plan/explore) │
 │  test-loop.ts   discover → run → analyze → fix loop             │
 └─────────────────────────────────────────────────────────────────┘
                              │
@@ -383,7 +389,7 @@ async function loadDeepagents(): Promise<typeof DeepAgents> {
 }
 ```
 
-(see [agent.ts:5-7](src/main/agent.ts#L5-L7), [subagent.ts:7-19](src/main/subagent.ts#L7-L19),
+(see [agent.ts:5-7](src/main/agent.ts#L5-L7), [worker.ts:7-19](src/main/worker.ts#L7-L19),
 [test-loop.ts:19-31](src/main/test-loop.ts#L19-L31), [models.ts:9-11](src/main/models.ts#L9-L11)).
 `Function('return import("…")')()` evaluates a real dynamic `import()` at
 runtime, which TypeScript otherwise lowers to `require()` and breaks ESM.
@@ -405,12 +411,13 @@ so changing it in Settings takes effect on the next message.
 
 | File | Purpose |
 |---|---|
-| [main.ts](src/main/main.ts) | Creates the `BrowserWindow` and registers every `ipcMain.handle` for `project:*`, `spec:*`, `agent:*`, `subagent:*`, `testloop:*`, `settings:*`. Also rebroadcasts test-loop state to all renderer windows ([main.ts:139-143](src/main/main.ts#L139-L143)). |
+| [main.ts](src/main/main.ts) | Creates the `BrowserWindow` and registers every `ipcMain.handle` for `project:*`, `spec:*`, `agent:*`, `worker:*`, `testloop:*`, `settings:*`. Also rebroadcasts test-loop state to all renderer windows ([main.ts:139-143](src/main/main.ts#L139-L143)). |
 | [agent.ts](src/main/agent.ts) | The **phase chatbot**. Builds a per-phase system prompt ([agent.ts:74-112](src/main/agent.ts#L74-L112)), constructs a deepagent with a `FilesystemBackend` rooted at the project root and a per-turn `update_artifact` tool ([agent.ts:143-188](src/main/agent.ts#L143-L188)), then returns `{ reply, artifact? }`. The artifact is populated only if the agent actually called `update_artifact` during the turn. |
 | [models.ts](src/main/models.ts) | Provider factory. Lazily ESM-imports `@langchain/anthropic`, `@langchain/openai`, `@langchain/google-genai`, or `@langchain/ollama` and returns a typed `BaseChatModel`. |
 | [project.ts](src/main/project.ts) | All filesystem + git work. `openProject` ensures a git repo and a `specs/` dir; `createSpec` slugifies the name, creates a `spec/<slug>` branch, writes the four empty artifact files plus `.specops.json`. `readArtifacts` / `writeArtifact` map artifact keys to filenames. |
 | [settings.ts](src/main/settings.ts) | Loads/saves `settings.json` from `app.getPath("userData")`, deep-merges it against the descriptor defaults, and caches the result. Exposes `getActiveProvider()` for agent code. |
-| [subagent.ts](src/main/subagent.ts) | The implementation-phase brain. Stores per-story state in `<spec>/.specops/subagents.json`. Implements: `decomposeStory` (forced `emit_tasks` tool call), `subAgentChat` (free-form chat with filesystem tools), `runSubAgentTask` (single decomposed-task execution with optional auto-complete), `generateUnitTests`, `generateIntegrationTests` (with framework auto-detect), `updateTaskStatus`, `resetSubAgent`. |
+| [worker.ts](src/main/worker.ts) | The implementation-phase brain. Stores per-story state in `<spec>/.specops/workers.json` (legacy `subagents.json` is auto-migrated). Implements: `decomposeStory` (forced `emit_tasks` tool call), `workerChat` (free-form chat with filesystem tools), `runWorkerTask` (single decomposed-task execution with optional auto-complete), `generateUnitTests`, `generateIntegrationTests` (with framework auto-detect), `updateTaskStatus`, `resetWorker`. Every Worker is wired with the generic deepagents `SubAgent`s from [workerSubagents.ts](src/main/workerSubagents.ts) (`plan`, `explore`, `test-author`) so it can delegate sub-work via the built-in `task` tool. |
+| [workerSubagents.ts](src/main/workerSubagents.ts) | Defines the three generic deepagents `SubAgent` specs (`plan`, `explore`, `test-author`) registered on every Worker for context-isolated delegation. |
 | [test-loop.ts](src/main/test-loop.ts) | The autonomous test loop. Owns a single `currentState`, emits updates to a single `listener` (wired in `main.ts` to broadcast over IPC). Handles run / analyze / fix / stop / iteration cap. |
 
 ### Preload — `src/preload/`
@@ -431,7 +438,7 @@ so changing it in Settings takes effect on the next message.
 | [PhaseNav.tsx](src/renderer/PhaseNav.tsx) | Tab-style nav across the four phases, with locking based on `canAdvance` ([phases.ts:12-23](src/renderer/phases.ts#L12-L23)). |
 | [PhaseView.tsx](src/renderer/PhaseView.tsx) | The single-artifact editor for phases 1-3. Spec / User Stories / Technical Stories use the rich `MarkdownEditor`; the legacy code editor branch uses a plain `<textarea>`. |
 | [Chat.tsx](src/renderer/Chat.tsx) | The right-hand chat panel for phases 1-3. Stateless w.r.t. history (it’s passed from `App`). Submit on Enter, Shift+Enter for newline. |
-| [ImplementationView.tsx](src/renderer/ImplementationView.tsx) | The four-tab implementation workspace (`stories`, `integration`, `testloop`, `code`). Drives all `subagent:*` and `testloop:*` IPC calls and renders task lists, sub-agent chat per story, generated test previews, and the live test-loop status. |
+| [ImplementationView.tsx](src/renderer/ImplementationView.tsx) | The four-tab implementation workspace (`workers`, `integration`, `testloop`, `code`). Drives all `worker:*` and `testloop:*` IPC calls and renders task lists, Worker chat per story, generated test previews, and the live test-loop status. |
 | [MarkdownEditor.tsx](src/renderer/MarkdownEditor.tsx) | Wrapper around `react-markdown-editor-lite` with `marked` for preview. Includes a scoped `<style>` block that retints the third-party editor against the shared CSS variables so it visually merges with the rest of the shell. |
 | [Settings.tsx](src/renderer/Settings.tsx) | The provider-configuration modal: pick provider, enter API key / base URL / model. Persists via `settings:save`. |
 | [phases.ts](src/renderer/phases.ts) | `Phase` enum, ordering, labels, `canAdvance`, `nextPhase` / `prevPhase`, and the renderer-side `Artifacts` type (mirrors `ArtifactFiles`). |
@@ -442,7 +449,7 @@ so changing it in Settings takes effect on the next message.
 
 | File | Purpose |
 |---|---|
-| [api.ts](src/shared/api.ts) | The single source of truth for IPC types: `ProjectInfo`, `SpecInfo`, `ArtifactFiles`, `Phase`, `AgentTurnRequest/Result`, `TechnicalStory`, `UserStory`, `TaskChunk`, `SubAgentState`, `TestLoopState`, `ProviderConfig`, `AppSettings`, plus the `SpecOpsApi` interface that the preload implements and the renderer consumes. Also exports `PROVIDER_DESCRIPTORS`, the declarative provider catalog used by both sides. |
+| [api.ts](src/shared/api.ts) | The single source of truth for IPC types: `ProjectInfo`, `SpecInfo`, `ArtifactFiles`, `Phase`, `AgentTurnRequest/Result`, `TechnicalStory`, `UserStory`, `TaskChunk`, `WorkerState`, `TestLoopState`, `ProviderConfig`, `AppSettings`, plus the `SpecOpsApi` interface that the preload implements and the renderer consumes. Also exports `PROVIDER_DESCRIPTORS`, the declarative provider catalog used by both sides. |
 
 ---
 
