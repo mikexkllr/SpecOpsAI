@@ -50,6 +50,63 @@ function projectRoot(specPath: string): string {
 
 type ChatMsg = { role: "user" | "assistant"; content: string };
 
+const abortControllers = new Map<string, AbortController>();
+
+function abortKey(specPath: string, id: string): string {
+  return `${specPath}::${id}`;
+}
+
+function makeAbortController(specPath: string, id: string): AbortController {
+  const key = abortKey(specPath, id);
+  abortControllers.get(key)?.abort();
+  const ac = new AbortController();
+  abortControllers.set(key, ac);
+  return ac;
+}
+
+function releaseAbortController(
+  specPath: string,
+  id: string,
+  ac: AbortController,
+): void {
+  const key = abortKey(specPath, id);
+  if (abortControllers.get(key) === ac) abortControllers.delete(key);
+}
+
+export function stopWorker(specPath: string, storyId: string): void {
+  abortControllers.get(abortKey(specPath, storyId))?.abort();
+}
+
+function isAbortError(err: unknown): boolean {
+  const e = err as { name?: string; message?: string } | null;
+  if (!e) return false;
+  if (e.name === "AbortError") return true;
+  return /\baborted?\b/i.test(e.message ?? "");
+}
+
+type BackendFactory = NonNullable<DeepAgents.CreateDeepAgentParams["backend"]>;
+
+async function buildBackend(specPath: string): Promise<BackendFactory> {
+  // virtualMode: true sandboxes paths under rootDir. Without it, deepagents'
+  // built-in prompt tells the model to use absolute paths starting with `/`,
+  // which then escape rootDir entirely (path.resolve drops the prefix), so the
+  // model's write_file calls land in the real filesystem root and silently fail.
+  //
+  // CompositeBackend routes deepagents' internal eviction paths
+  // (/conversation_history, /large_tool_results) into an in-memory StateBackend
+  // so they never litter the project root.
+  const { CompositeBackend, FilesystemBackend, StateBackend } = await loadDeepagents();
+  const fsBackend = new FilesystemBackend({
+    rootDir: projectRoot(specPath),
+    virtualMode: true,
+  });
+  return (runtime) =>
+    new CompositeBackend(fsBackend, {
+      "/conversation_history": new StateBackend(runtime),
+      "/large_tool_results": new StateBackend(runtime),
+    });
+}
+
 async function migrateLegacyStore(specPath: string): Promise<void> {
   const newFile = path.join(specPath, STORE_FILE);
   const oldFile = path.join(specPath, LEGACY_STORE_FILE);
@@ -164,6 +221,7 @@ export async function decomposeStory(
   store[req.story.id] = working;
   await saveStore(req.specPath, store);
 
+  const ac = makeAbortController(req.specPath, req.story.id);
   try {
     let captured: Array<{ id: string; title: string; description: string }> | null = null;
     const { tool } = await loadTools();
@@ -199,9 +257,12 @@ export async function decomposeStory(
       tools: [emitTasks],
       subagents: workerSubagentsNoTestAuthor,
     });
-    await agent.invoke({
-      messages: [new HumanMessage("Decompose the story now by calling emit_tasks.")],
-    });
+    await agent.invoke(
+      {
+        messages: [new HumanMessage("Decompose the story now by calling emit_tasks.")],
+      },
+      { signal: ac.signal },
+    );
 
     const emitted = captured as Array<{ id: string; title: string; description: string }> | null;
     if (!emitted || emitted.length === 0) {
@@ -225,14 +286,19 @@ export async function decomposeStory(
     await saveStore(req.specPath, store);
     return next;
   } catch (err) {
+    const aborted = isAbortError(err);
     const next: WorkerState = {
       ...prev,
       status: "idle",
-      error: `Decomposition failed: ${(err as Error).message}`,
+      error: aborted
+        ? "Decomposition stopped by user."
+        : `Decomposition failed: ${(err as Error).message}`,
     };
     store[req.story.id] = next;
     await saveStore(req.specPath, store);
     return next;
+  } finally {
+    releaseAbortController(req.specPath, req.story.id, ac);
   }
 }
 
@@ -269,18 +335,19 @@ async function runStoryWorker(
   system: string,
   history: ChatMsg[],
   userMessage: string,
+  signal: AbortSignal,
 ): Promise<string> {
   const cfg = await getActiveProvider();
-  const { createDeepAgent, FilesystemBackend } = await loadDeepagents();
+  const { createDeepAgent } = await loadDeepagents();
   const model = await buildChatModel(cfg);
   const lcMessages = await toLcMessages([...history, { role: "user", content: userMessage }]);
   const agent = createDeepAgent({
     model,
     systemPrompt: system,
-    backend: new FilesystemBackend({ rootDir: projectRoot(specPath) }),
+    backend: await buildBackend(specPath),
     subagents: workerSubagents,
   });
-  const result = await agent.invoke({ messages: lcMessages });
+  const result = await agent.invoke({ messages: lcMessages }, { signal });
   return lastAssistantText(result) || "(no reply)";
 }
 
@@ -299,13 +366,20 @@ export async function workerChat(
   store[req.story.id] = working;
   await saveStore(req.specPath, store);
 
+  const ac = makeAbortController(req.specPath, req.story.id);
   try {
     const system = chatSystemPrompt(req.story, prev.tasks, req.artifacts);
     const history: ChatMsg[] = prev.messages.map((m) => ({
       role: m.role === "user" ? "user" : "assistant",
       content: m.text,
     }));
-    const reply = await runStoryWorker(req.specPath, system, history, req.message);
+    const reply = await runStoryWorker(
+      req.specPath,
+      system,
+      history,
+      req.message,
+      ac.signal,
+    );
     const next: WorkerState = {
       ...working,
       messages: [...working.messages, { role: "agent", text: reply }],
@@ -315,18 +389,19 @@ export async function workerChat(
     await saveStore(req.specPath, store);
     return next;
   } catch (err) {
+    const aborted = isAbortError(err);
+    const text = aborted ? "(stopped by user)" : `Worker error: ${(err as Error).message}`;
     const next: WorkerState = {
       ...working,
-      messages: [
-        ...working.messages,
-        { role: "agent", text: `Worker error: ${(err as Error).message}` },
-      ],
+      messages: [...working.messages, { role: "agent", text }],
       status: "idle",
-      error: (err as Error).message,
+      error: aborted ? undefined : (err as Error).message,
     };
     store[req.story.id] = next;
     await saveStore(req.specPath, store);
     return next;
+  } finally {
+    releaseAbortController(req.specPath, req.story.id, ac);
   }
 }
 
@@ -370,13 +445,20 @@ export async function runWorkerTask(
   store[req.story.id] = working;
   await saveStore(req.specPath, store);
 
+  const ac = makeAbortController(req.specPath, req.story.id);
   try {
     const system = chatSystemPrompt(req.story, inProgressTasks, req.artifacts);
     const history: ChatMsg[] = prev.messages.map((m) => ({
       role: m.role === "user" ? "user" : "assistant",
       content: m.text,
     }));
-    const reply = await runStoryWorker(req.specPath, system, history, userTurnText);
+    const reply = await runStoryWorker(
+      req.specPath,
+      system,
+      history,
+      userTurnText,
+      ac.signal,
+    );
     const finalTasks = req.autoComplete
       ? inProgressTasks.map((t) =>
           t.id === task.id ? { ...t, status: "done" as TaskStatus } : t,
@@ -392,19 +474,20 @@ export async function runWorkerTask(
     await saveStore(req.specPath, store);
     return next;
   } catch (err) {
+    const aborted = isAbortError(err);
+    const text = aborted ? "(stopped by user)" : `Worker error: ${(err as Error).message}`;
     const next: WorkerState = {
       ...working,
       tasks: prev.tasks,
-      messages: [
-        ...working.messages,
-        { role: "agent", text: `Worker error: ${(err as Error).message}` },
-      ],
+      messages: [...working.messages, { role: "agent", text }],
       status: "idle",
-      error: (err as Error).message,
+      error: aborted ? undefined : (err as Error).message,
     };
     store[req.story.id] = next;
     await saveStore(req.specPath, store);
     return next;
+  } finally {
+    releaseAbortController(req.specPath, req.story.id, ac);
   }
 }
 
@@ -479,24 +562,28 @@ export async function generateUnitTests(
   const root = projectRoot(req.specPath);
   const absPath = path.join(root, relPath);
 
+  const ac = makeAbortController(req.specPath, req.story.id);
   try {
     const cfg = await getActiveProvider();
-    const { createDeepAgent, FilesystemBackend } = await loadDeepagents();
+    const { createDeepAgent } = await loadDeepagents();
     const { HumanMessage } = await loadMessages();
     const model = await buildChatModel(cfg);
     const agent = createDeepAgent({
       model,
       systemPrompt: unitTestPrompt(req.story, tasks, req.artifacts, relPath),
-      backend: new FilesystemBackend({ rootDir: root }),
+      backend: await buildBackend(req.specPath),
       subagents: workerSubagents,
     });
-    const result = await agent.invoke({
-      messages: [
-        new HumanMessage(
-          `Generate unit tests for ${req.story.id} and save them to ${relPath}.`,
-        ),
-      ],
-    });
+    const result = await agent.invoke(
+      {
+        messages: [
+          new HumanMessage(
+            `Generate unit tests for ${req.story.id} and save them to ${relPath}.`,
+          ),
+        ],
+      },
+      { signal: ac.signal },
+    );
     const summary = lastAssistantText(result) || "(no summary)";
     let content = "";
     try {
@@ -517,8 +604,10 @@ export async function generateUnitTests(
       path: relPath,
       content: "",
       summary: "",
-      error: (err as Error).message,
+      error: isAbortError(err) ? "stopped by user" : (err as Error).message,
     };
+  } finally {
+    releaseAbortController(req.specPath, req.story.id, ac);
   }
 }
 
@@ -704,24 +793,28 @@ export async function generateIntegrationTests(
   const root = projectRoot(req.specPath);
   const absPath = path.join(root, relPath);
 
+  const ac = makeAbortController(req.specPath, req.story.id);
   try {
     const cfg = await getActiveProvider();
-    const { createDeepAgent, FilesystemBackend } = await loadDeepagents();
+    const { createDeepAgent } = await loadDeepagents();
     const { HumanMessage } = await loadMessages();
     const model = await buildChatModel(cfg);
     const agent = createDeepAgent({
       model,
       systemPrompt: integrationTestPrompt(req.story, req.artifacts, relPath, framework),
-      backend: new FilesystemBackend({ rootDir: root }),
+      backend: await buildBackend(req.specPath),
       subagents: workerSubagents,
     });
-    const result = await agent.invoke({
-      messages: [
-        new HumanMessage(
-          `Generate integration tests for ${req.story.id} and save them to ${relPath}.`,
-        ),
-      ],
-    });
+    const result = await agent.invoke(
+      {
+        messages: [
+          new HumanMessage(
+            `Generate integration tests for ${req.story.id} and save them to ${relPath}.`,
+          ),
+        ],
+      },
+      { signal: ac.signal },
+    );
     const summary = lastAssistantText(result) || "(no summary)";
     let content = "";
     try {
@@ -744,8 +837,10 @@ export async function generateIntegrationTests(
       content: "",
       summary: "",
       framework,
-      error: (err as Error).message,
+      error: isAbortError(err) ? "stopped by user" : (err as Error).message,
     };
+  } finally {
+    releaseAbortController(req.specPath, req.story.id, ac);
   }
 }
 

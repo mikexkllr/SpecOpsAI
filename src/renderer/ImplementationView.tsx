@@ -309,6 +309,9 @@ export function ImplementationView({
   function stopRun(): void {
     stopRef.current = true;
     setPendingApproval(null);
+    if (selectedStory) {
+      void window.specops.stopWorker(specPath, selectedStory.id);
+    }
   }
 
   if (tab === "code") {
@@ -543,15 +546,19 @@ function StoryWorkspace({
               {agentMode === "yolo" ? "YOLO" : "HITL"}
             </span>
           </div>
-          {busy === "run" ? (
-            <button className="btn btn-danger btn-sm" onClick={onStop}>
+          {busy !== null ? (
+            <button
+              className="btn btn-danger btn-sm"
+              onClick={onStop}
+              title="abort the running worker call"
+            >
               stop
             </button>
           ) : (
             <button
               className={`btn btn-sm ${agentMode === "yolo" ? "btn-primary" : ""}`}
               onClick={onRun}
-              disabled={busy !== null || pendingApproval !== null}
+              disabled={pendingApproval !== null}
               title={
                 agentMode === "yolo"
                   ? "autonomously run all pending tasks"

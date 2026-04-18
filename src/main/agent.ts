@@ -177,7 +177,12 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurnResu
   try {
     const cfg = await getActiveProvider();
     const model = await buildChatModel(cfg);
-    const { createDeepAgent, FilesystemBackend } = await loadDeepagents();
+    const {
+      createDeepAgent,
+      CompositeBackend,
+      FilesystemBackend,
+      StateBackend,
+    } = await loadDeepagents();
     const { tool } = await loadTools();
     const lcMessages = await toLcMessages(messages);
 
@@ -194,10 +199,18 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurnResu
       },
     );
 
+    const fsBackend = new FilesystemBackend({
+      rootDir: projectRoot(req.specPath),
+      virtualMode: true,
+    });
     const agent = createDeepAgent({
       model,
       systemPrompt: system,
-      backend: new FilesystemBackend({ rootDir: projectRoot(req.specPath) }),
+      backend: (runtime) =>
+        new CompositeBackend(fsBackend, {
+          "/conversation_history": new StateBackend(runtime),
+          "/large_tool_results": new StateBackend(runtime),
+        }),
       tools: [updateArtifact],
       subagents: workerSubagents,
     });

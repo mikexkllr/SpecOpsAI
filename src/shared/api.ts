@@ -288,6 +288,7 @@ export interface SpecOpsApi {
     status: TaskStatus,
   ): Promise<WorkerState>;
   resetWorker(specPath: string, storyId: string): Promise<WorkerStore>;
+  stopWorker(specPath: string, storyId: string): Promise<void>;
   startTestLoop(request: TestLoopRequest): Promise<void>;
   stopTestLoop(): Promise<void>;
   getTestLoopState(): Promise<TestLoopState>;

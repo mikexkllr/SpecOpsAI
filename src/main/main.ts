@@ -30,6 +30,7 @@ import {
   readWorkers,
   resetWorker,
   runWorkerTask,
+  stopWorker,
   updateTaskStatus,
   workerChat,
 } from "./worker";
@@ -121,6 +122,9 @@ function registerIpc(): void {
   ipcMain.handle("worker:reset", (_e, specPath: string, storyId: string) =>
     resetWorker(specPath, storyId),
   );
+  ipcMain.handle("worker:stop", (_e, specPath: string, storyId: string) => {
+    stopWorker(specPath, storyId);
+  });
   ipcMain.handle(
     "worker:generate-unit-tests",
     (_e, request: GenerateUnitTestsRequest) => generateUnitTests(request),

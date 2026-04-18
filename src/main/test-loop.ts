@@ -1,4 +1,4 @@
-import { exec } from "node:child_process";
+import { exec, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type * as DeepAgents from "deepagents";
@@ -41,6 +41,15 @@ let currentState: TestLoopState = {
 
 let stopRequested = false;
 let listener: ((state: TestLoopState) => void) | null = null;
+let activeAbortController: AbortController | null = null;
+let activeChildProcess: ChildProcess | null = null;
+
+function isAbortError(err: unknown): boolean {
+  const e = err as { name?: string; message?: string } | null;
+  if (!e) return false;
+  if (e.name === "AbortError") return true;
+  return /\baborted?\b/i.test(e.message ?? "");
+}
 
 function emit(): void {
   listener?.(currentState);
@@ -68,6 +77,14 @@ export function onTestLoopUpdate(cb: (state: TestLoopState) => void): () => void
 
 export function stopTestLoop(): void {
   stopRequested = true;
+  activeAbortController?.abort();
+  if (activeChildProcess && activeChildProcess.exitCode === null) {
+    try {
+      activeChildProcess.kill("SIGTERM");
+    } catch {
+      // ignore — process may have already exited
+    }
+  }
   const s = currentState.status;
   if (s === "running-tests" || s === "analyzing" || s === "fixing") {
     setStatus("stopped");
@@ -110,7 +127,7 @@ function runCommand(
   cwd: string,
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve) => {
-    exec(
+    const child = exec(
       cmd,
       { cwd, timeout: TEST_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
       (err, stdout, stderr) => {
@@ -120,9 +137,11 @@ function runCommand(
             .code;
           code = typeof raw === "number" ? raw : 1;
         }
+        if (activeChildProcess === child) activeChildProcess = null;
         resolve({ stdout: stdout ?? "", stderr: stderr ?? "", code });
       },
     );
+    activeChildProcess = child;
   });
 }
 
@@ -249,10 +268,16 @@ async function runFixAgent(
   specPath: string,
   artifacts: ArtifactFiles,
   failures: TestRunResult[],
+  signal: AbortSignal,
 ): Promise<{ verdict: TestLoopVerdict; summary: string }> {
   const { tool } = await loadTools();
   const { HumanMessage } = await loadMessages();
-  const { createDeepAgent, FilesystemBackend } = await loadDeepagents();
+  const {
+    createDeepAgent,
+    CompositeBackend,
+    FilesystemBackend,
+    StateBackend,
+  } = await loadDeepagents();
 
   let captured: TestLoopVerdict = "fix-code";
 
@@ -274,20 +299,31 @@ async function runFixAgent(
 
   const cfg = await getActiveProvider();
   const model = await buildChatModel(cfg);
+  const fsBackend = new FilesystemBackend({
+    rootDir: projectRoot(specPath),
+    virtualMode: true,
+  });
   const agent = createDeepAgent({
     model,
     systemPrompt: fixSystemPrompt(artifacts, failures),
     tools: [verdictTool],
-    backend: new FilesystemBackend({ rootDir: projectRoot(specPath) }),
+    backend: (runtime) =>
+      new CompositeBackend(fsBackend, {
+        "/conversation_history": new StateBackend(runtime),
+        "/large_tool_results": new StateBackend(runtime),
+      }),
   });
 
-  const result = await agent.invoke({
-    messages: [
-      new HumanMessage(
-        `Analyze the ${failures.length} failing test(s), call verdict, then apply the fix.`,
-      ),
-    ],
-  });
+  const result = await agent.invoke(
+    {
+      messages: [
+        new HumanMessage(
+          `Analyze the ${failures.length} failing test(s), call verdict, then apply the fix.`,
+        ),
+      ],
+    },
+    { signal },
+  );
 
   return { verdict: captured, summary: lastAssistantText(result) || "(no summary)" };
 }
@@ -295,6 +331,8 @@ async function runFixAgent(
 export async function startTestLoop(req: TestLoopRequest): Promise<void> {
   const maxIter = req.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   stopRequested = false;
+  activeAbortController = new AbortController();
+  const signal = activeAbortController.signal;
 
   setState({
     status: "running-tests",
@@ -335,6 +373,7 @@ export async function startTestLoop(req: TestLoopRequest): Promise<void> {
         req.specPath,
         req.artifacts,
         failures,
+        signal,
       );
       iteration.verdict = verdict;
       iteration.agentSummary = summary;
@@ -349,6 +388,13 @@ export async function startTestLoop(req: TestLoopRequest): Promise<void> {
 
     setStatus("max-iterations");
   } catch (err) {
-    setState({ status: "error", error: (err as Error).message });
+    if (isAbortError(err) || stopRequested) {
+      setStatus("stopped");
+    } else {
+      setState({ status: "error", error: (err as Error).message });
+    }
+  } finally {
+    activeAbortController = null;
+    activeChildProcess = null;
   }
 }
