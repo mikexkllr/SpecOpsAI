@@ -40,7 +40,9 @@ export const workerSubagents: SubAgent[] = [
   testAuthorSubagent,
 ];
 
-export const workerSubagentsNoTestAuthor: SubAgent[] = [
+// Used by test-generation flows where the outer agent IS the test author —
+// exposing `test-author` there would be circular, so we drop it.
+export const testGenSubagents: SubAgent[] = [
   planSubagent,
   exploreSubagent,
 ];

@@ -3,20 +3,6 @@ import * as path from "node:path";
 import type * as DeepAgents from "deepagents";
 import type { BaseMessage } from "@langchain/core/messages";
 import { z } from "zod";
-
-async function loadDeepagents(): Promise<typeof DeepAgents> {
-  return await (Function('return import("deepagents")')() as Promise<typeof DeepAgents>);
-}
-
-type MessagesModule = typeof import("@langchain/core/messages");
-async function loadMessages(): Promise<MessagesModule> {
-  return await (Function('return import("@langchain/core/messages")')() as Promise<MessagesModule>);
-}
-
-type ToolsModule = typeof import("@langchain/core/tools");
-async function loadTools(): Promise<ToolsModule> {
-  return await (Function('return import("@langchain/core/tools")')() as Promise<ToolsModule>);
-}
 import type {
   ArtifactFiles,
   GenerateIntegrationTestsRequest,
@@ -38,8 +24,9 @@ import { buildChatModel } from "./models";
 import { getActiveProvider } from "./settings";
 import {
   workerSubagents,
-  workerSubagentsNoTestAuthor,
+  testGenSubagents,
 } from "./workerSubagents";
+import { loadDeps } from "./deepagentsDeps";
 
 const STORE_FILE = path.join(".specops", "workers.json");
 const LEGACY_STORE_FILE = path.join(".specops", "subagents.json");
@@ -95,7 +82,8 @@ async function buildBackend(specPath: string): Promise<BackendFactory> {
   // CompositeBackend routes deepagents' internal eviction paths
   // (/conversation_history, /large_tool_results) into an in-memory StateBackend
   // so they never litter the project root.
-  const { CompositeBackend, FilesystemBackend, StateBackend } = await loadDeepagents();
+  const { deepagents } = await loadDeps();
+  const { CompositeBackend, FilesystemBackend, StateBackend } = deepagents;
   const fsBackend = new FilesystemBackend({
     rootDir: projectRoot(specPath),
     virtualMode: true,
@@ -182,9 +170,9 @@ function decompositionPrompt(
 }
 
 async function toLcMessages(messages: ChatMsg[]): Promise<BaseMessage[]> {
-  const { HumanMessage, AIMessage } = await loadMessages();
+  const { messages: M } = await loadDeps();
   return messages.map((m) =>
-    m.role === "user" ? new HumanMessage(m.content) : new AIMessage(m.content),
+    m.role === "user" ? new M.HumanMessage(m.content) : new M.AIMessage(m.content),
   );
 }
 
@@ -224,9 +212,8 @@ export async function decomposeStory(
   const ac = makeAbortController(req.specPath, req.story.id);
   try {
     let captured: Array<{ id: string; title: string; description: string }> | null = null;
-    const { tool } = await loadTools();
-    const { HumanMessage } = await loadMessages();
-    const emitTasks = tool(
+    const { deepagents, messages: M, tools: T } = await loadDeps();
+    const emitTasks = T.tool(
       async (input: { tasks: Array<{ id: string; title: string; description: string }> }) => {
         captured = input.tasks;
         return `Captured ${input.tasks.length} tasks.`;
@@ -250,16 +237,14 @@ export async function decomposeStory(
     );
 
     const cfg = await getActiveProvider();
-    const { createDeepAgent } = await loadDeepagents();
-    const agent = createDeepAgent({
+    const agent = deepagents.createDeepAgent({
       model: await buildChatModel(cfg),
       systemPrompt: decompositionPrompt(req.story, req.artifacts),
       tools: [emitTasks],
-      subagents: workerSubagentsNoTestAuthor,
     });
     await agent.invoke(
       {
-        messages: [new HumanMessage("Decompose the story now by calling emit_tasks.")],
+        messages: [new M.HumanMessage("Decompose the story now by calling emit_tasks.")],
       },
       { signal: ac.signal },
     );
@@ -338,10 +323,10 @@ async function runStoryWorker(
   signal: AbortSignal,
 ): Promise<string> {
   const cfg = await getActiveProvider();
-  const { createDeepAgent } = await loadDeepagents();
+  const { deepagents } = await loadDeps();
   const model = await buildChatModel(cfg);
   const lcMessages = await toLcMessages([...history, { role: "user", content: userMessage }]);
-  const agent = createDeepAgent({
+  const agent = deepagents.createDeepAgent({
     model,
     systemPrompt: system,
     backend: await buildBackend(specPath),
@@ -531,7 +516,7 @@ function unitTestPrompt(
   return [
     "You are a test-authoring Worker for ONE Technical Story.",
     "Generate a unit-test specification for the story and WRITE it to the file path below using your `write_file` tool.",
-    "You may delegate the focused writing pass to the `test-author` deepagents subagent via the built-in `task` tool if the story is large, but the final file must end up on disk at the target path.",
+    "You may delegate exploration (finding existing code/patterns) to the `explore` subagent via the built-in `task` tool, but YOU write the test file yourself.",
     "Tests must be derived strictly from the story's acceptance criteria and decomposed tasks — one `it(...)` per observable behavior.",
     "Include: a short preamble, `describe` blocks grouping behaviors, and concrete `it(...)` cases with Arrange/Act/Assert notes.",
     "Prefer framework-agnostic pseudocode unless the artifacts clearly indicate a stack (Jest/Vitest/etc). Mark assumptions explicitly.",
@@ -565,19 +550,18 @@ export async function generateUnitTests(
   const ac = makeAbortController(req.specPath, req.story.id);
   try {
     const cfg = await getActiveProvider();
-    const { createDeepAgent } = await loadDeepagents();
-    const { HumanMessage } = await loadMessages();
+    const { deepagents, messages: M } = await loadDeps();
     const model = await buildChatModel(cfg);
-    const agent = createDeepAgent({
+    const agent = deepagents.createDeepAgent({
       model,
       systemPrompt: unitTestPrompt(req.story, tasks, req.artifacts, relPath),
       backend: await buildBackend(req.specPath),
-      subagents: workerSubagents,
+      subagents: testGenSubagents,
     });
     const result = await agent.invoke(
       {
         messages: [
-          new HumanMessage(
+          new M.HumanMessage(
             `Generate unit tests for ${req.story.id} and save them to ${relPath}.`,
           ),
         ],
@@ -764,7 +748,7 @@ function integrationTestPrompt(
   return [
     "You are a test-authoring Worker generating INTEGRATION / end-to-end tests for ONE User Story.",
     "Write the test specification to the file path below using your `write_file` tool.",
-    "You may delegate the focused writing pass to the `test-author` deepagents subagent via the built-in `task` tool, but the final file must be on disk at the target path.",
+    "You may delegate exploration (finding existing page objects, selectors, widgets) to the `explore` subagent via the built-in `task` tool, but YOU write the test file yourself.",
     "Integration tests must exercise the user-visible flow end to end — not internal units.",
     concrete
       ? `Each test must be a concrete, runnable ${framework} scenario.`
@@ -796,19 +780,18 @@ export async function generateIntegrationTests(
   const ac = makeAbortController(req.specPath, req.story.id);
   try {
     const cfg = await getActiveProvider();
-    const { createDeepAgent } = await loadDeepagents();
-    const { HumanMessage } = await loadMessages();
+    const { deepagents, messages: M } = await loadDeps();
     const model = await buildChatModel(cfg);
-    const agent = createDeepAgent({
+    const agent = deepagents.createDeepAgent({
       model,
       systemPrompt: integrationTestPrompt(req.story, req.artifacts, relPath, framework),
       backend: await buildBackend(req.specPath),
-      subagents: workerSubagents,
+      subagents: testGenSubagents,
     });
     const result = await agent.invoke(
       {
         messages: [
-          new HumanMessage(
+          new M.HumanMessage(
             `Generate integration tests for ${req.story.id} and save them to ${relPath}.`,
           ),
         ],

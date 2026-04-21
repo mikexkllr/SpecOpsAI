@@ -136,30 +136,31 @@ Each phase has its own chat history (`messagesByPhase`, [App.tsx:31-36](src/rend
 and its own system prompt that instructs the agent what to produce.
 
 All four phases share the same machinery:
-[`runAgentTurn`](src/main/agent.ts#L143-L188) builds a per-phase system prompt,
+[`runAgentTurn`](src/main/agent.ts#L182-L225) builds a per-phase system prompt,
 runs a deepagent, and returns `{ reply, artifact? }`.
 
 Two capabilities are wired into every phase chatbot:
 
 - **Real codebase access.** Each turn builds a `FilesystemBackend` rooted at
-  the project root ([agent.ts:170](src/main/agent.ts#L170)), giving the agent
-  `ls`, `read_file`, `write_file`, `edit_file`, `glob`, and `grep` over the
-  entire repo. This is the same backend the per-story Worker chat uses,
+  the project root ([agent.ts:197-200](src/main/agent.ts#L197-L200)), giving the
+  agent `ls`, `read_file`, `write_file`, `edit_file`, `glob`, and `grep` over
+  the entire repo. This is the same backend the per-story Worker chat uses,
   so the phase agent can ground its spec/story revisions in the real code
   (e.g. grep for IPC channels before writing a spec section about them).
-- **`update_artifact` tool.** A structured tool (zod schema `{ content: string }`)
-  is registered on every turn ([agent.ts:155-167](src/main/agent.ts#L155-L167)).
-  The agent calls it exactly once when it intends to persist an updated
-  artifact, passing the **full** updated markdown — never a diff. The tool
-  captures the content in a closure; `runAgentTurn` surfaces it as
-  `result.artifact`, and the renderer flushes it to disk via the existing
-  `writeArtifact` path ([App.tsx:122-127](src/renderer/App.tsx#L122-L127)).
-  If the user's message is a pure question, the agent skips the tool and the
-  artifact file on disk is untouched.
+- **Disk-diff artifact persistence.** Before the turn runs, the UI's current
+  artifact content is flushed to disk via
+  [`syncArtifactToDisk`](src/main/agent.ts#L158-L169); after the turn, the same
+  file is re-read via [`readArtifactFromDisk`](src/main/agent.ts#L171-L180) and
+  compared against that baseline. If the content differs, `runAgentTurn`
+  returns `{ artifact: { key, content } }` and the renderer flushes it through
+  the existing `writeArtifact` path ([App.tsx:122-127](src/renderer/App.tsx#L122-L127)).
+  The system prompt instructs the agent to call `write_file` on the artifact's
+  virtual path with the **full** updated markdown when it wants to persist a
+  change, and to leave the file untouched for pure questions.
 
 The agent's final assistant message is returned verbatim as the chat `reply`.
 There is no XML fencing — the old `<artifact>` / `<reply>` protocol has been
-replaced end-to-end by the `update_artifact` tool call.
+replaced end-to-end by the pre/post disk-diff on the artifact file.
 
 ### 1. Spec phase
 
@@ -361,7 +362,7 @@ The app is a standard three-process Electron app:
 │  project.ts     git init, branch-per-spec, artifact read/write  │
 │  settings.ts    settings.json (provider config + agentMode)     │
 │  models.ts      Anthropic/OpenAI/Google/Ollama → BaseChatModel  │
-│  agent.ts       phase chatbot (FS tools + update_artifact tool) │
+│  agent.ts       phase chatbot (FS tools + disk-diff artifact)   │
 │  worker.ts      per-story decomposition / chat / task / tests   │
 │  workerSubagents.ts generic deepagents SubAgents (plan/explore) │
 │  test-loop.ts   discover → run → analyze → fix loop             │
@@ -412,7 +413,7 @@ so changing it in Settings takes effect on the next message.
 | File | Purpose |
 |---|---|
 | [main.ts](src/main/main.ts) | Creates the `BrowserWindow` and registers every `ipcMain.handle` for `project:*`, `spec:*`, `agent:*`, `worker:*`, `testloop:*`, `settings:*`. Also rebroadcasts test-loop state to all renderer windows ([main.ts:139-143](src/main/main.ts#L139-L143)). |
-| [agent.ts](src/main/agent.ts) | The **phase chatbot**. Builds a per-phase system prompt ([agent.ts:74-112](src/main/agent.ts#L74-L112)), constructs a deepagent with a `FilesystemBackend` rooted at the project root and a per-turn `update_artifact` tool ([agent.ts:143-188](src/main/agent.ts#L143-L188)), then returns `{ reply, artifact? }`. The artifact is populated only if the agent actually called `update_artifact` during the turn. |
+| [agent.ts](src/main/agent.ts) | The **phase chatbot**. Builds a per-phase system prompt ([agent.ts:72-118](src/main/agent.ts#L72-L118)), flushes the UI's current artifact to disk, constructs a deepagent with a `FilesystemBackend` rooted at the project root ([agent.ts:182-225](src/main/agent.ts#L182-L225)), then diffs the on-disk artifact against the pre-turn baseline and returns `{ reply, artifact? }`. The artifact is populated whenever the post-turn file differs from the baseline — i.e. whenever the agent wrote to it via `write_file` / `edit_file`. |
 | [models.ts](src/main/models.ts) | Provider factory. Lazily ESM-imports `@langchain/anthropic`, `@langchain/openai`, `@langchain/google-genai`, or `@langchain/ollama` and returns a typed `BaseChatModel`. |
 | [project.ts](src/main/project.ts) | All filesystem + git work. `openProject` ensures a git repo and a `specs/` dir; `createSpec` slugifies the name, creates a `spec/<slug>` branch, writes the four empty artifact files plus `.specops.json`. `readArtifacts` / `writeArtifact` map artifact keys to filenames. |
 | [settings.ts](src/main/settings.ts) | Loads/saves `settings.json` from `app.getPath("userData")`, deep-merges it against the descriptor defaults, and caches the result. Exposes `getActiveProvider()` for agent code. |

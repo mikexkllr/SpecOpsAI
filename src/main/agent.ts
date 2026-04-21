@@ -1,21 +1,6 @@
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type * as DeepAgents from "deepagents";
 import type { BaseMessage } from "@langchain/core/messages";
-import { z } from "zod";
-
-async function loadDeepagents(): Promise<typeof DeepAgents> {
-  return await (Function('return import("deepagents")')() as Promise<typeof DeepAgents>);
-}
-
-type MessagesModule = typeof import("@langchain/core/messages");
-async function loadMessages(): Promise<MessagesModule> {
-  return await (Function('return import("@langchain/core/messages")')() as Promise<MessagesModule>);
-}
-
-type ToolsModule = typeof import("@langchain/core/tools");
-async function loadTools(): Promise<ToolsModule> {
-  return await (Function('return import("@langchain/core/tools")')() as Promise<ToolsModule>);
-}
 import type {
   AgentTurn,
   AgentTurnRequest,
@@ -26,6 +11,7 @@ import type {
 import { getActiveProvider } from "./settings";
 import { buildChatModel } from "./models";
 import { workerSubagents } from "./workerSubagents";
+import { loadDeps } from "./deepagentsDeps";
 
 interface PhaseConfig {
   artifact: keyof ArtifactFiles;
@@ -91,7 +77,7 @@ function buildSystemPrompt(
   const cfg = PHASE_CONFIG[phase];
   const root = projectRoot(specPath);
   const specRel = path.relative(root, specPath).replace(/\\/g, "/") || ".";
-  const artifactRel = `${specRel}/${ARTIFACT_FILENAMES[cfg.artifact]}`;
+  const artifactVirtual = `/${specRel}/${ARTIFACT_FILENAMES[cfg.artifact]}`;
   const sections: string[] = [
     "You are the SpecOps AI agent, guiding a developer through Spec-Driven Development.",
     `Current phase: **${cfg.label}**.`,
@@ -99,15 +85,15 @@ function buildSystemPrompt(
     "",
     "## Paths you care about",
     `- Your filesystem tools are rooted at the **project root**: \`${root}\`.`,
-    `- This conversation's spec folder: \`${specRel}/\` — contains \`spec.md\`, \`user-stories.md\`, \`technical-stories.md\`, \`code.md\`.`,
-    `- The artifact you are editing in this phase: \`${artifactRel}\`.`,
-    "- Source code lives under `src/`. Dependencies in `package.json`. Other specs live alongside under `specs/`.",
+    `- This conversation's spec folder: \`/${specRel}/\` — contains \`spec.md\`, \`user-stories.md\`, \`technical-stories.md\`, \`code.md\`.`,
+    `- The artifact you are editing in this phase: \`${artifactVirtual}\`.`,
+    "- Source code lives under `/src/`. Dependencies in `/package.json`. Other specs live alongside under `/specs/`.",
     "",
     "## How to work",
-    "You have filesystem tools (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`) rooted at the project root. Use them to ground your answers — actually read the relevant files, actually grep for real symbols. Paths passed to tools are relative to the project root (e.g. `package.json`, `src/main/agent.ts`, or the spec path above).",
-    `To persist the ${cfg.label} markdown, call the \`update_artifact\` tool with the FULL updated content (never a diff). Call it exactly once per turn, and only when the user's message implies a change to the artifact. For pure questions, skip the call.`,
+    "You have filesystem tools (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`) rooted at the project root. Use them to ground your answers — actually read the relevant files, actually grep for real symbols. All paths are virtual absolute paths starting with `/`.",
+    `To persist the ${cfg.label}, call \`write_file\` on \`${artifactVirtual}\` with the FULL updated markdown (never a diff). Only write when the user's message implies a change. For pure questions, don't touch the file — just answer.`,
     phase === "implementation"
-      ? "You may also edit source files directly with `write_file` / `edit_file` in this phase."
+      ? "You may also edit other source files with `write_file` / `edit_file` in this phase."
       : "",
     "Finish with a 1–3 sentence reply describing what you changed or what you need from the user. Never answer meta questions about your tools by listing them — just demonstrate by using them.",
     "",
@@ -134,9 +120,9 @@ function buildSystemPrompt(
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
 async function toLcMessages(messages: ChatMessage[]): Promise<BaseMessage[]> {
-  const { HumanMessage, AIMessage } = await loadMessages();
+  const { messages: M } = await loadDeps();
   return messages.map((m) =>
-    m.role === "user" ? new HumanMessage(m.content) : new AIMessage(m.content),
+    m.role === "user" ? new M.HumanMessage(m.content) : new M.AIMessage(m.content),
   );
 }
 
@@ -169,35 +155,44 @@ function lastAssistantText(result: unknown): string {
   return "";
 }
 
+async function syncArtifactToDisk(
+  specPath: string,
+  key: keyof ArtifactFiles,
+  content: string,
+): Promise<void> {
+  // Write the UI's current artifact content to disk before the agent runs, so
+  // any post-turn difference is attributable to the agent (not pre-existing
+  // drift between UI state and disk).
+  const abs = path.join(specPath, ARTIFACT_FILENAMES[key]);
+  await fs.mkdir(path.dirname(abs), { recursive: true });
+  await fs.writeFile(abs, content, "utf8");
+}
+
+async function readArtifactFromDisk(
+  specPath: string,
+  key: keyof ArtifactFiles,
+): Promise<string | null> {
+  try {
+    return await fs.readFile(path.join(specPath, ARTIFACT_FILENAMES[key]), "utf8");
+  } catch {
+    return null;
+  }
+}
+
 export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurnResult> {
   const phaseCfg = PHASE_CONFIG[req.phase];
   const system = buildSystemPrompt(req.phase, req.artifacts, req.specPath);
   const messages = toMessages(req.history, req.message);
 
   try {
+    const baseline = req.artifacts[phaseCfg.artifact];
+    await syncArtifactToDisk(req.specPath, phaseCfg.artifact, baseline);
+
     const cfg = await getActiveProvider();
     const model = await buildChatModel(cfg);
-    const {
-      createDeepAgent,
-      CompositeBackend,
-      FilesystemBackend,
-      StateBackend,
-    } = await loadDeepagents();
-    const { tool } = await loadTools();
+    const { deepagents } = await loadDeps();
+    const { createDeepAgent, CompositeBackend, FilesystemBackend, StateBackend } = deepagents;
     const lcMessages = await toLcMessages(messages);
-
-    let captured: string | null = null;
-    const updateArtifact = tool(
-      async (input: { content: string }) => {
-        captured = input.content;
-        return `Captured ${input.content.length} chars for ${phaseCfg.label}.`;
-      },
-      {
-        name: "update_artifact",
-        description: `Persist the full updated ${phaseCfg.label} markdown. Call this exactly once per turn when you intend to change the artifact. Omit the call if the user's message is purely a question.`,
-        schema: z.object({ content: z.string() }),
-      },
-    );
 
     const fsBackend = new FilesystemBackend({
       rootDir: projectRoot(req.specPath),
@@ -211,17 +206,18 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurnResu
           "/conversation_history": new StateBackend(runtime),
           "/large_tool_results": new StateBackend(runtime),
         }),
-      tools: [updateArtifact],
       subagents: workerSubagents,
     });
     const result = await agent.invoke({ messages: lcMessages });
     const reply = lastAssistantText(result) || "(no reply)";
+
+    const after = await readArtifactFromDisk(req.specPath, phaseCfg.artifact);
+    const changed = after !== null && after !== baseline;
     return {
       reply,
-      artifact:
-        captured !== null
-          ? { key: phaseCfg.artifact, content: captured }
-          : undefined,
+      artifact: changed
+        ? { key: phaseCfg.artifact, content: after }
+        : undefined,
     };
   } catch (err) {
     return { reply: `Agent error: ${(err as Error).message}` };
