@@ -1,7 +1,6 @@
 import { exec, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type * as DeepAgents from "deepagents";
 import type { BaseMessage } from "@langchain/core/messages";
 import { z } from "zod";
 import type {
@@ -15,20 +14,8 @@ import type {
 } from "../shared/api";
 import { buildChatModel } from "./models";
 import { getActiveProvider } from "./settings";
-
-async function loadDeepagents(): Promise<typeof DeepAgents> {
-  return await (Function('return import("deepagents")')() as Promise<typeof DeepAgents>);
-}
-
-type MessagesModule = typeof import("@langchain/core/messages");
-async function loadMessages(): Promise<MessagesModule> {
-  return await (Function('return import("@langchain/core/messages")')() as Promise<MessagesModule>);
-}
-
-type ToolsModule = typeof import("@langchain/core/tools");
-async function loadTools(): Promise<ToolsModule> {
-  return await (Function('return import("@langchain/core/tools")')() as Promise<ToolsModule>);
-}
+import { loadDeps } from "./deepagentsDeps";
+import { projectRoot, lastAssistantText, isAbortError } from "./utils";
 
 const DEFAULT_MAX_ITERATIONS = 5;
 const TEST_TIMEOUT_MS = 120_000;
@@ -43,13 +30,6 @@ let stopRequested = false;
 let listener: ((state: TestLoopState) => void) | null = null;
 let activeAbortController: AbortController | null = null;
 let activeChildProcess: ChildProcess | null = null;
-
-function isAbortError(err: unknown): boolean {
-  const e = err as { name?: string; message?: string } | null;
-  if (!e) return false;
-  if (e.name === "AbortError") return true;
-  return /\baborted?\b/i.test(e.message ?? "");
-}
 
 function emit(): void {
   listener?.(currentState);
@@ -89,10 +69,6 @@ export function stopTestLoop(): void {
   if (s === "running-tests" || s === "analyzing" || s === "fixing") {
     setStatus("stopped");
   }
-}
-
-function projectRoot(specPath: string): string {
-  return path.resolve(specPath, "..", "..");
 }
 
 async function discoverTestFiles(specPath: string): Promise<string[]> {
@@ -210,27 +186,6 @@ async function runTests(specPath: string): Promise<TestRunResult[]> {
   return results;
 }
 
-function lastAssistantText(result: unknown): string {
-  const r = result as { messages?: BaseMessage[] };
-  const msgs = r?.messages ?? [];
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const m = msgs[i];
-    const type =
-      (m as { _getType?: () => string })._getType?.() ?? (m as { type?: string }).type;
-    if (type === "ai" || type === "AIMessage") {
-      const content = (m as BaseMessage).content;
-      if (typeof content === "string") return content.trim();
-      if (Array.isArray(content)) {
-        return content
-          .map((c) => (typeof c === "string" ? c : (c as { text?: string }).text ?? ""))
-          .join("")
-          .trim();
-      }
-    }
-  }
-  return "";
-}
-
 function fixSystemPrompt(artifacts: ArtifactFiles, failures: TestRunResult[]): string {
   const failureBlock = failures
     .map(
@@ -270,14 +225,10 @@ async function runFixAgent(
   failures: TestRunResult[],
   signal: AbortSignal,
 ): Promise<{ verdict: TestLoopVerdict; summary: string }> {
-  const { tool } = await loadTools();
-  const { HumanMessage } = await loadMessages();
-  const {
-    createDeepAgent,
-    CompositeBackend,
-    FilesystemBackend,
-    StateBackend,
-  } = await loadDeepagents();
+  const { deepagents, messages: M, tools: T } = await loadDeps();
+  const { tool } = T;
+  const { HumanMessage } = M;
+  const { createDeepAgent, CompositeBackend, FilesystemBackend, StateBackend } = deepagents;
 
   let captured: TestLoopVerdict = "fix-code";
 

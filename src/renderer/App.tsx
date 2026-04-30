@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import type { AgentTurn, ArtifactFiles, ProjectInfo, SpecInfo } from "../shared/api";
 import { Chat, type ChatMessage } from "./Chat";
 import { ImplementationView } from "./ImplementationView";
@@ -8,6 +8,10 @@ import { ProjectBar } from "./ProjectBar";
 import { Settings } from "./Settings";
 import { EMPTY_ARTIFACTS, type Artifacts, type Phase } from "./phases";
 import { PROVIDER_DESCRIPTORS, type AgentMode, type AppSettings } from "../shared/api";
+
+const MemoizedPhaseView = React.memo(PhaseView);
+const MemoizedChat = React.memo(Chat);
+const MemoizedImplementationView = React.memo(ImplementationView);
 
 const ARTIFACT_KEYS: Record<keyof Artifacts, keyof ArtifactFiles> = {
   spec: "spec",
@@ -203,7 +207,7 @@ export function App(): JSX.Element {
           <PhaseNav phase={phase} artifacts={artifacts} onSelect={setPhase} />
           {phase === "implementation" ? (
             <div className="flex-1 flex-row">
-              <ImplementationView
+              <MemoizedImplementationView
                 specPath={activeSpec.path}
                 artifacts={artifacts}
                 agentMode={settings?.agentMode ?? "hitl"}
@@ -219,8 +223,8 @@ export function App(): JSX.Element {
                 minHeight: 0,
               }}
             >
-              <PhaseView phase={phase} artifacts={artifacts} onChange={updateArtifacts} />
-              <Chat
+              <MemoizedPhaseView phase={phase} artifacts={artifacts} onChange={updateArtifacts} />
+              <MemoizedChat
                 phase={phase}
                 messages={messagesByPhase[phase]}
                 onSend={sendMessage}

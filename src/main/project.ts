@@ -168,9 +168,7 @@ export async function writeArtifact(
   await fs.writeFile(path.join(specPath, file), content, "utf8");
 }
 
-function projectRootOf(specPath: string): string {
-  return path.resolve(specPath, "..", "..");
-}
+import { projectRoot } from "./utils";
 
 async function gitOk(cwd: string, ...args: string[]): Promise<boolean> {
   try {
@@ -203,7 +201,7 @@ export async function checkMergeReadiness(
   specPath: string,
   testLoop: TestLoopState,
 ): Promise<MergeCheckResult> {
-  const root = projectRootOf(specPath);
+  const root = projectRoot(specPath);
   const issues: string[] = [];
 
   const meta = await readSpecMeta(specPath);
@@ -280,7 +278,7 @@ export async function mergeSpecToMain(
     return { ok: false, branch: check.branch, mainBranch: check.mainBranch, check };
   }
 
-  const root = projectRootOf(specPath);
+  const root = projectRoot(specPath);
   const branch = check.branch;
   const mainBranch = check.mainBranch;
   const startBranch = await currentBranch(root);

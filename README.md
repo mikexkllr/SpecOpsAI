@@ -362,10 +362,12 @@ The app is a standard three-process Electron app:
 │  project.ts     git init, branch-per-spec, artifact read/write  │
 │  settings.ts    settings.json (provider config + agentMode)     │
 │  models.ts      Anthropic/OpenAI/Google/Ollama → BaseChatModel  │
+│  deepagentsDeps.ts  cached ESM loader for deepagents + LC core  │
 │  agent.ts       phase chatbot (FS tools + disk-diff artifact)   │
 │  worker.ts      per-story decomposition / chat / task / tests   │
 │  workerSubagents.ts generic deepagents SubAgents (plan/explore) │
 │  test-loop.ts   discover → run → analyze → fix loop             │
+│  utils.ts       shared: projectRoot, lastAssistantText, isAbort │
 └─────────────────────────────────────────────────────────────────┘
                              │
                              ▼
@@ -380,20 +382,26 @@ Two patterns are worth calling out:
 ### ESM-from-CJS dynamic loader
 
 `deepagents` and `@langchain/*` are pure ESM, but the Electron main process is
-compiled to CommonJS (`tsconfig.main.json` → `dist/main/*.js`). Every main-side
-file that needs them uses the same trick to bypass TypeScript’s `require`
-rewriting:
+compiled to CommonJS (`tsconfig.main.json` → `dist/main/*.js`). All main-side
+files that need them use a single cached loader in
+[`deepagentsDeps.ts`](src/main/deepagentsDeps.ts):
 
 ```ts
-async function loadDeepagents(): Promise<typeof DeepAgents> {
-  return await (Function('return import("deepagents")')() as Promise<typeof DeepAgents>);
+export function loadDeps(): Promise<Deps> {
+  if (!cached) {
+    cached = Promise.all([
+      Function('return import("deepagents")')() as Promise<typeof DeepAgents>,
+      Function('return import("@langchain/core/messages")')() as Promise<typeof Messages>,
+      Function('return import("@langchain/core/tools")')() as Promise<typeof Tools>,
+    ]).then(([deepagents, messages, tools]) => ({ deepagents, messages, tools }));
+  }
+  return cached;
 }
 ```
 
-(see [agent.ts:5-7](src/main/agent.ts#L5-L7), [worker.ts:7-19](src/main/worker.ts#L7-L19),
-[test-loop.ts:19-31](src/main/test-loop.ts#L19-L31), [models.ts:9-11](src/main/models.ts#L9-L11)).
 `Function('return import("…")')()` evaluates a real dynamic `import()` at
-runtime, which TypeScript otherwise lowers to `require()` and breaks ESM.
+runtime, which TypeScript otherwise lowers to `require()` and breaks ESM. The
+result is cached so we pay the import cost once.
 
 ### Provider abstraction
 
@@ -419,7 +427,9 @@ so changing it in Settings takes effect on the next message.
 | [settings.ts](src/main/settings.ts) | Loads/saves `settings.json` from `app.getPath("userData")`, deep-merges it against the descriptor defaults, and caches the result. Exposes `getActiveProvider()` for agent code. |
 | [worker.ts](src/main/worker.ts) | The implementation-phase brain. Stores per-story state in `<spec>/.specops/workers.json` (legacy `subagents.json` is auto-migrated). Implements: `decomposeStory` (forced `emit_tasks` tool call), `workerChat` (free-form chat with filesystem tools), `runWorkerTask` (single decomposed-task execution with optional auto-complete), `generateUnitTests`, `generateIntegrationTests` (with framework auto-detect), `updateTaskStatus`, `resetWorker`. Every Worker is wired with the generic deepagents `SubAgent`s from [workerSubagents.ts](src/main/workerSubagents.ts) (`plan`, `explore`, `test-author`) so it can delegate sub-work via the built-in `task` tool. |
 | [workerSubagents.ts](src/main/workerSubagents.ts) | Defines the three generic deepagents `SubAgent` specs (`plan`, `explore`, `test-author`) registered on every Worker for context-isolated delegation. |
+| [deepagentsDeps.ts](src/main/deepagentsDeps.ts) | Cached ESM loader for `deepagents`, `@langchain/core/messages`, and `@langchain/core/tools`. All main-side agent code imports through this single point. |
 | [test-loop.ts](src/main/test-loop.ts) | The autonomous test loop. Owns a single `currentState`, emits updates to a single `listener` (wired in `main.ts` to broadcast over IPC). Handles run / analyze / fix / stop / iteration cap. |
+| [utils.ts](src/main/utils.ts) | Shared utilities extracted from duplication: `projectRoot()`, `lastAssistantText()`, `isAbortError()`. Used by `agent.ts`, `worker.ts`, `test-loop.ts`, and `project.ts`. |
 
 ### Preload — `src/preload/`
 
@@ -439,7 +449,11 @@ so changing it in Settings takes effect on the next message.
 | [PhaseNav.tsx](src/renderer/PhaseNav.tsx) | Tab-style nav across the four phases, with locking based on `canAdvance` ([phases.ts:12-23](src/renderer/phases.ts#L12-L23)). |
 | [PhaseView.tsx](src/renderer/PhaseView.tsx) | The single-artifact editor for phases 1-3. Spec / User Stories / Technical Stories use the rich `MarkdownEditor`; the legacy code editor branch uses a plain `<textarea>`. |
 | [Chat.tsx](src/renderer/Chat.tsx) | The right-hand chat panel for phases 1-3. Stateless w.r.t. history (it’s passed from `App`). Submit on Enter, Shift+Enter for newline. |
-| [ImplementationView.tsx](src/renderer/ImplementationView.tsx) | The four-tab implementation workspace (`workers`, `integration`, `testloop`, `code`). Drives all `worker:*` and `testloop:*` IPC calls and renders task lists, Worker chat per story, generated test previews, and the live test-loop status. |
+| [ImplementationView.tsx](src/renderer/ImplementationView.tsx) | The four-tab implementation workspace (`workers`, `integration`, `testloop`, `code`). Drives all `worker:*` and `testloop:*` IPC calls. Delegates to extracted sub-components: `StoryList`, `StoryWorkspace`, `IntegrationTestsPanel`, `TestLoopPanel`. |
+| [components/StoryList.tsx](src/renderer/components/StoryList.tsx) | Left sidebar of decomposable stories with progress labels. |
+| [components/StoryWorkspace.tsx](src/renderer/components/StoryWorkspace.tsx) | Per-story workspace — head, action toolbar, decomposed task list, Worker chat. |
+| [components/IntegrationTestsPanel.tsx](src/renderer/components/IntegrationTestsPanel.tsx) | Integration-test generation UI per User Story with framework badges. |
+| [components/TestLoopPanel.tsx](src/renderer/components/TestLoopPanel.tsx) | Test-loop status, iteration cards, and merge-to-main panel. |
 | [MarkdownEditor.tsx](src/renderer/MarkdownEditor.tsx) | Wrapper around `react-markdown-editor-lite` with `marked` for preview. Includes a scoped `<style>` block that retints the third-party editor against the shared CSS variables so it visually merges with the rest of the shell. |
 | [Settings.tsx](src/renderer/Settings.tsx) | The provider-configuration modal: pick provider, enter API key / base URL / model. Persists via `settings:save`. |
 | [phases.ts](src/renderer/phases.ts) | `Phase` enum, ordering, labels, `canAdvance`, `nextPhase` / `prevPhase`, and the renderer-side `Artifacts` type (mirrors `ArtifactFiles`). |
@@ -464,6 +478,9 @@ npm install
 # typecheck both tsconfigs (main and renderer)
 npm run typecheck
 
+# run tests (Vitest)
+npm run test
+
 # dev: builds main, starts vite dev server, then launches Electron
 npm run dev
 
@@ -474,14 +491,25 @@ npm run build
 npm start
 ```
 
+### Linting & formatting
+
+```bash
+npm run lint          # check for ESLint issues
+npm run lint:fix      # auto-fix what's fixable
+npm run format        # format all source files with Prettier
+npm run format:check  # verify formatting without writing
+```
+
 Project structure:
 
 ```
 src/
-├── main/        compiled by tsconfig.main.json → dist/main/*.js  (CommonJS)
-├── preload/     compiled by tsconfig.main.json → dist/preload/preload.js
-├── renderer/    bundled by Vite → dist/index.html + assets       (ESM)
-└── shared/      type-only, imported from both sides
+├── main/          compiled by tsconfig.main.json → dist/main/*.js  (CommonJS)
+│   └── utils.ts   shared: projectRoot, lastAssistantText, isAbortError
+├── preload/       compiled by tsconfig.main.json → dist/preload/preload.js
+├── renderer/      bundled by Vite → dist/index.html + assets       (ESM)
+│   └── components/  StoryList, StoryWorkspace, IntegrationTestsPanel, TestLoopPanel
+└── shared/        type-only, imported from both sides
 ```
 
 The Electron entry point is `dist/main/main.js` (set in `package.json` `main`).

@@ -27,13 +27,10 @@ import {
   testGenSubagents,
 } from "./workerSubagents";
 import { loadDeps } from "./deepagentsDeps";
+import { projectRoot, lastAssistantText, isAbortError } from "./utils";
 
 const STORE_FILE = path.join(".specops", "workers.json");
 const LEGACY_STORE_FILE = path.join(".specops", "subagents.json");
-
-function projectRoot(specPath: string): string {
-  return path.resolve(specPath, "..", "..");
-}
 
 type ChatMsg = { role: "user" | "assistant"; content: string };
 
@@ -62,13 +59,6 @@ function releaseAbortController(
 
 export function stopWorker(specPath: string, storyId: string): void {
   abortControllers.get(abortKey(specPath, storyId))?.abort();
-}
-
-function isAbortError(err: unknown): boolean {
-  const e = err as { name?: string; message?: string } | null;
-  if (!e) return false;
-  if (e.name === "AbortError") return true;
-  return /\baborted?\b/i.test(e.message ?? "");
 }
 
 type BackendFactory = NonNullable<DeepAgents.CreateDeepAgentParams["backend"]>;
@@ -174,26 +164,6 @@ async function toLcMessages(messages: ChatMsg[]): Promise<BaseMessage[]> {
   return messages.map((m) =>
     m.role === "user" ? new M.HumanMessage(m.content) : new M.AIMessage(m.content),
   );
-}
-
-function lastAssistantText(result: unknown): string {
-  const r = result as { messages?: BaseMessage[] };
-  const msgs = r?.messages ?? [];
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const m = msgs[i];
-    const type = (m as { _getType?: () => string })._getType?.() ?? (m as { type?: string }).type;
-    if (type === "ai" || type === "AIMessage") {
-      const content = (m as BaseMessage).content;
-      if (typeof content === "string") return content.trim();
-      if (Array.isArray(content)) {
-        return content
-          .map((c) => (typeof c === "string" ? c : (c as { text?: string }).text ?? ""))
-          .join("")
-          .trim();
-      }
-    }
-  }
-  return "";
 }
 
 export async function readWorkers(specPath: string): Promise<WorkerStore> {

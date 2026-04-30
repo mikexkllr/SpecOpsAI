@@ -12,6 +12,7 @@ import { getActiveProvider } from "./settings";
 import { buildChatModel } from "./models";
 import { workerSubagents } from "./workerSubagents";
 import { loadDeps } from "./deepagentsDeps";
+import { projectRoot, lastAssistantText } from "./utils";
 
 interface PhaseConfig {
   artifact: keyof ArtifactFiles;
@@ -57,10 +58,6 @@ const PHASE_CONFIG: Record<Phase, PhaseConfig> = {
     ].join(" "),
   },
 };
-
-function projectRoot(specPath: string): string {
-  return path.resolve(specPath, "..", "..");
-}
 
 const ARTIFACT_FILENAMES: Record<keyof ArtifactFiles, string> = {
   spec: "spec.md",
@@ -133,26 +130,6 @@ function toMessages(history: AgentTurn[], userMessage: string): ChatMessage[] {
   }));
   msgs.push({ role: "user", content: userMessage });
   return msgs;
-}
-
-function lastAssistantText(result: unknown): string {
-  const r = result as { messages?: BaseMessage[] };
-  const msgs = r?.messages ?? [];
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const m = msgs[i];
-    const type = (m as { _getType?: () => string })._getType?.() ?? (m as { type?: string }).type;
-    if (type === "ai" || type === "AIMessage") {
-      const content = (m as BaseMessage).content;
-      if (typeof content === "string") return content.trim();
-      if (Array.isArray(content)) {
-        return content
-          .map((c) => (typeof c === "string" ? c : (c as { text?: string }).text ?? ""))
-          .join("")
-          .trim();
-      }
-    }
-  }
-  return "";
 }
 
 async function syncArtifactToDisk(
