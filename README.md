@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="SPEC — spec-driven dev" width="260"/>
+</p>
+
 # SpecOps AI
 
 A desktop IDE for **Spec-Driven Development** with an integrated AI agent harness

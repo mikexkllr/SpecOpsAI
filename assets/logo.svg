@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 80" width="260" height="80">
+  <rect width="260" height="80" fill="#0b0b0c" rx="6"/>
+  <!-- S -->
+  <rect x="10" y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="20" y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="30" y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="0"  y="10" width="8" height="8" fill="#d97757"/>
+  <rect x="10" y="20" width="8" height="8" fill="#d97757"/>
+  <rect x="20" y="20" width="8" height="8" fill="#d97757"/>
+  <rect x="30" y="20" width="8" height="8" fill="#d97757"/>
+  <rect x="40" y="30" width="8" height="8" fill="#d97757"/>
+  <rect x="10" y="40" width="8" height="8" fill="#d97757"/>
+  <rect x="20" y="40" width="8" height="8" fill="#d97757"/>
+  <rect x="30" y="40" width="8" height="8" fill="#d97757"/>
+  <!-- P -->
+  <rect x="70"  y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="80"  y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="90"  y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="100" y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="70"  y="10" width="8" height="8" fill="#d97757"/>
+  <rect x="110" y="10" width="8" height="8" fill="#d97757"/>
+  <rect x="70"  y="20" width="8" height="8" fill="#d97757"/>
+  <rect x="80"  y="20" width="8" height="8" fill="#d97757"/>
+  <rect x="90"  y="20" width="8" height="8" fill="#d97757"/>
+  <rect x="100" y="20" width="8" height="8" fill="#d97757"/>
+  <rect x="70"  y="30" width="8" height="8" fill="#d97757"/>
+  <rect x="70"  y="40" width="8" height="8" fill="#d97757"/>
+  <!-- E -->
+  <rect x="140" y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="150" y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="160" y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="170" y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="180" y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="140" y="10" width="8" height="8" fill="#d97757"/>
+  <rect x="140" y="20" width="8" height="8" fill="#d97757"/>
+  <rect x="150" y="20" width="8" height="8" fill="#d97757"/>
+  <rect x="160" y="20" width="8" height="8" fill="#d97757"/>
+  <rect x="170" y="20" width="8" height="8" fill="#d97757"/>
+  <rect x="140" y="30" width="8" height="8" fill="#d97757"/>
+  <rect x="140" y="40" width="8" height="8" fill="#d97757"/>
+  <rect x="150" y="40" width="8" height="8" fill="#d97757"/>
+  <rect x="160" y="40" width="8" height="8" fill="#d97757"/>
+  <rect x="170" y="40" width="8" height="8" fill="#d97757"/>
+  <rect x="180" y="40" width="8" height="8" fill="#d97757"/>
+  <!-- C -->
+  <rect x="220" y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="230" y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="240" y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="250" y="0"  width="8" height="8" fill="#d97757"/>
+  <rect x="210" y="10" width="8" height="8" fill="#d97757"/>
+  <rect x="210" y="20" width="8" height="8" fill="#d97757"/>
+  <rect x="210" y="30" width="8" height="8" fill="#d97757"/>
+  <rect x="220" y="40" width="8" height="8" fill="#d97757"/>
+  <rect x="230" y="40" width="8" height="8" fill="#d97757"/>
+  <rect x="240" y="40" width="8" height="8" fill="#d97757"/>
+  <rect x="250" y="40" width="8" height="8" fill="#d97757"/>
+  <!-- subtitle -->
+  <text x="130" y="67" text-anchor="middle" fill="#d97757" font-size="11"
+    font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" opacity="0.7">
+    spec-driven dev
+  </text>
+</svg>
