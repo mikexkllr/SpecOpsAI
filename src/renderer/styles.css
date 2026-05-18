@@ -619,14 +619,6 @@ pre.terminal-msg.terminal-live {
   text-align: center;
 }
 
-.empty-state .ascii {
-  font-family: var(--font-mono);
-  color: var(--accent);
-  font-size: 13px;
-  line-height: 1.2;
-  white-space: pre;
-  opacity: 0.85;
-}
 
 .empty-state .msg {
   font-size: var(--fs-md);

@@ -326,6 +326,41 @@ function providerLabel(settings: AppSettings | null): string {
   return `⚙ ${d?.label ?? settings.activeProvider} · ${model}`;
 }
 
+function SpecLogo(): JSX.Element {
+  const px = 8, step = 10, lGap = 20, lw = 5 * step;
+  // Each letter: array of 5 rows, each row = filled column indices
+  const LETTERS = [
+    [[1,2,3],[0],[1,2,3],[4],[1,2,3]],       // S
+    [[0,1,2,3],[0,4],[0,1,2,3],[0],[0]],      // P
+    [[0,1,2,3,4],[0],[0,1,2,3],[0],[0,1,2,3,4]], // E
+    [[1,2,3,4],[0],[0],[0],[1,2,3,4]],        // C
+  ];
+  const W = 3 * (lw + lGap) + lw;
+  const H = 5 * step;
+  return (
+    <svg viewBox={`0 0 ${W} ${H + 22}`} width={W} height={H + 22} style={{ opacity: 0.85 }}>
+      {LETTERS.flatMap((rows, li) =>
+        rows.flatMap((cols, row) =>
+          cols.map(col => (
+            <rect
+              key={`${li}-${row}-${col}`}
+              x={li * (lw + lGap) + col * step}
+              y={row * step}
+              width={px}
+              height={px}
+              fill="var(--accent)"
+            />
+          ))
+        )
+      )}
+      <text x={W / 2} y={H + 17} textAnchor="middle" fill="var(--accent)"
+        fontSize="11" fontFamily="var(--font-mono)" opacity="0.7">
+        spec-driven dev
+      </text>
+    </svg>
+  );
+}
+
 function EmptyState({
   hasProject,
   onOpen,
@@ -335,11 +370,7 @@ function EmptyState({
 }): JSX.Element {
   return (
     <div className="empty-state">
-      <pre className="ascii">{`   ▗▄▖   ▗▄▄▖ ▗▄▄▄▖ ▗▄▄▖
-  ▐▌ ▐▌ ▐▌    ▐▌   ▐▌
-  ▐▛▀▜▌  ▝▀▚▖ ▐▛▀▘ ▐▌
-  ▐▌ ▐▌ ▗▄▄▞▘ ▐▌   ▝▚▄▄▖
-        spec-driven dev`}</pre>
+      <SpecLogo />
       <div className="msg">
         {hasProject
           ? "create a new spec to start the phase-based workflow"
