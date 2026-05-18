@@ -52,6 +52,14 @@ const api: SpecOpsApi = {
       ipcRenderer.removeListener("window:maximized", handler);
     };
   },
+  onCliChunk: (callback: (data: { storyId: string; text: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { storyId: string; text: string }) =>
+      callback(data);
+    ipcRenderer.on("worker:cli-chunk", handler);
+    return () => {
+      ipcRenderer.removeListener("worker:cli-chunk", handler);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld("specops", api);

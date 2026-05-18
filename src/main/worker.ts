@@ -16,17 +16,19 @@ import type {
   UserStory,
   WorkerChatRequest,
   WorkerDecomposeRequest,
+  WorkerMessage,
   WorkerRunTaskRequest,
   WorkerState,
   WorkerStore,
 } from "../shared/api";
 import { buildChatModel } from "./models";
-import { getActiveProvider } from "./settings";
+import { getActiveProvider, loadSettings } from "./settings";
 import {
   workerSubagents,
   testGenSubagents,
 } from "./workerSubagents";
 import { loadDeps } from "./deepagentsDeps";
+import { runCliAgent, buildCliTaskPrompt } from "./cliAgent";
 import { projectRoot, lastAssistantText, isAbortError } from "./utils";
 
 const STORE_FILE = path.join(".specops", "workers.json");
@@ -402,27 +404,51 @@ export async function runWorkerTask(
 
   const ac = makeAbortController(req.specPath, req.story.id);
   try {
-    const system = chatSystemPrompt(req.story, inProgressTasks, req.artifacts);
-    const history: ChatMsg[] = prev.messages.map((m) => ({
-      role: m.role === "user" ? "user" : "assistant",
-      content: m.text,
-    }));
-    const reply = await runStoryWorker(
-      req.specPath,
-      system,
-      history,
-      userTurnText,
-      ac.signal,
+    const settings = await loadSettings();
+    const usingCli = settings.codingAgent !== "deepagent";
+
+    let reply: string;
+    if (usingCli) {
+      reply = await runCliAgent({
+        agentId: settings.codingAgent,
+        cwd: projectRoot(req.specPath),
+        storyId: req.story.id,
+        prompt: buildCliTaskPrompt(task, req.story, req.artifacts),
+        yolo: settings.agentMode === "yolo",
+        signal: ac.signal,
+      });
+    } else {
+      const system = chatSystemPrompt(req.story, inProgressTasks, req.artifacts);
+      const history: ChatMsg[] = prev.messages.map((m) => ({
+        role: m.role === "user" ? "user" : "assistant",
+        content: m.text,
+      }));
+      reply = await runStoryWorker(
+        req.specPath,
+        system,
+        history,
+        userTurnText,
+        ac.signal,
+      );
+    }
+
+    // YOLO → auto-complete to "done"; HITL + CLI → "needs-attention" for review
+    const nextTaskStatus: TaskStatus = req.autoComplete
+      ? "done"
+      : usingCli
+        ? "needs-attention"
+        : task.status;
+
+    const finalTasks = inProgressTasks.map((t) =>
+      t.id === task.id ? { ...t, status: nextTaskStatus } : t,
     );
-    const finalTasks = req.autoComplete
-      ? inProgressTasks.map((t) =>
-          t.id === task.id ? { ...t, status: "done" as TaskStatus } : t,
-        )
-      : inProgressTasks;
+    const replyMessage: WorkerMessage = usingCli
+      ? { role: "terminal", text: reply }
+      : { role: "agent", text: reply };
     const next: WorkerState = {
       ...working,
       tasks: finalTasks,
-      messages: [...working.messages, { role: "agent", text: reply }],
+      messages: [...working.messages, replyMessage],
       status: allDone(finalTasks) ? "done" : "idle",
     };
     store[req.story.id] = next;

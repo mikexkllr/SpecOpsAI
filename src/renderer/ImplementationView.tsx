@@ -79,6 +79,7 @@ export function ImplementationView({
     storyId: string;
     taskId: string;
   } | null>(null);
+  const [cliBuffers, setCliBuffers] = useState<Record<string, string>>({});
   const stopRef = useRef(false);
 
   useEffect(() => {
@@ -93,6 +94,15 @@ export function ImplementationView({
   useEffect(() => {
     window.specops.getTestLoopState().then(setTestLoopState);
     return window.specops.onTestLoopUpdate(setTestLoopState);
+  }, []);
+
+  useEffect(() => {
+    return window.specops.onCliChunk(({ storyId, text }) => {
+      setCliBuffers((prev) => ({
+        ...prev,
+        [storyId]: (prev[storyId] ?? "") + text,
+      }));
+    });
   }, []);
 
   const selectedStory = stories.find((s) => s.id === selectedId) ?? null;
@@ -137,6 +147,7 @@ export function ImplementationView({
     const nextStatus: Record<TaskStatus, TaskStatus> = {
       pending: "in-progress",
       "in-progress": "done",
+      "needs-attention": "done",
       done: "pending",
     };
     const state = await window.specops.updateTaskStatus(
@@ -144,6 +155,17 @@ export function ImplementationView({
       selectedStory.id,
       taskId,
       nextStatus[current],
+    );
+    setStore((s) => ({ ...s, [state.storyId]: state }));
+  }
+
+  async function markTaskDone(taskId: string): Promise<void> {
+    if (!selectedStory) return;
+    const state = await window.specops.updateTaskStatus(
+      specPath,
+      selectedStory.id,
+      taskId,
+      "done",
     );
     setStore((s) => ({ ...s, [state.storyId]: state }));
   }
@@ -183,6 +205,11 @@ export function ImplementationView({
     const next = await window.specops.resetWorker(specPath, selectedStory.id);
     setStore(next);
     setPendingApproval(null);
+    setCliBuffers((prev) => {
+      const updated = { ...prev };
+      delete updated[selectedStory.id];
+      return updated;
+    });
   }
 
   async function startTestLoop(): Promise<void> {
@@ -225,6 +252,7 @@ export function ImplementationView({
     taskId: string,
     autoComplete: boolean,
   ): Promise<WorkerState> {
+    setCliBuffers((prev) => ({ ...prev, [story.id]: "" }));
     const state = await window.specops.runWorkerTask({
       specPath,
       story,
@@ -236,13 +264,14 @@ export function ImplementationView({
     return state;
   }
 
-  async function runStory(): Promise<void> {
+  async function runStory(freshState?: WorkerState): Promise<void> {
     if (!selectedStory || busy) return;
     stopRef.current = false;
     setBusy("run");
     setPendingApproval(null);
     try {
-      let state =
+      let state: WorkerState | undefined =
+        freshState ??
         store[selectedStory.id] ??
         (await window.specops.readWorkers(specPath).then((s) => {
           setStore(s);
@@ -258,7 +287,9 @@ export function ImplementationView({
         if (state.error || state.tasks.length === 0) return;
       }
       while (!stopRef.current) {
-        const next = state.tasks.find((t) => t.status !== "done");
+        const next = state.tasks.find(
+          (t) => t.status !== "done" && t.status !== "needs-attention",
+        );
         if (!next) break;
         const isYolo = agentMode === "yolo";
         state = await runTask(selectedStory, next.id, isYolo);
@@ -283,7 +314,7 @@ export function ImplementationView({
     );
     setStore((s) => ({ ...s, [state.storyId]: state }));
     setPendingApproval(null);
-    void runStory();
+    void runStory(state);
   }
 
   function rejectTask(): void {
@@ -376,9 +407,11 @@ export function ImplementationView({
                   ? pendingApproval.taskId
                   : null
               }
+              cliBuffer={cliBuffers[selectedStory.id] ?? ""}
               onDecompose={decompose}
               onSend={sendChat}
               onCycleTask={cycleTask}
+              onMarkDone={markTaskDone}
               onReset={resetStory}
               onRun={runStory}
               onStop={stopRun}

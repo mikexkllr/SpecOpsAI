@@ -45,7 +45,9 @@ export interface TechnicalStory {
   body: string;
 }
 
-export type TaskStatus = "pending" | "in-progress" | "done";
+export type CodingAgentId = "deepagent" | "claude-code" | "gh-copilot";
+
+export type TaskStatus = "pending" | "in-progress" | "needs-attention" | "done";
 
 export interface TaskChunk {
   id: string;
@@ -55,7 +57,7 @@ export interface TaskChunk {
 }
 
 export interface WorkerMessage {
-  role: "user" | "agent";
+  role: "user" | "agent" | "terminal";
   text: string;
 }
 
@@ -209,6 +211,7 @@ export interface AppSettings {
   activeProvider: ProviderId;
   providers: Record<ProviderId, ProviderConfig>;
   agentMode: AgentMode;
+  codingAgent: CodingAgentId;
 }
 
 export interface ProviderDescriptor {
@@ -302,6 +305,7 @@ export interface SpecOpsApi {
   closeWindow(): Promise<void>;
   isWindowMaximized(): Promise<boolean>;
   onMaximizedChange(callback: (maximized: boolean) => void): () => void;
+  onCliChunk(callback: (data: { storyId: string; text: string }) => void): () => void;
 }
 
 declare global {

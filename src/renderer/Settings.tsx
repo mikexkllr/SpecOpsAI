@@ -3,6 +3,7 @@ import {
   PROVIDER_DESCRIPTORS,
   type AgentMode,
   type AppSettings,
+  type CodingAgentId,
   type ProviderConfig,
   type ProviderId,
 } from "../shared/api";
@@ -116,6 +117,10 @@ export function Settings({ onClose, onSaved }: Props): JSX.Element {
               mode={settings.agentMode}
               onChange={(agentMode) => setSettings({ ...settings, agentMode })}
             />
+            <CodingAgentSection
+              codingAgent={settings.codingAgent}
+              onChange={(codingAgent) => setSettings({ ...settings, codingAgent })}
+            />
           </div>
         </div>
 
@@ -213,6 +218,55 @@ function AgentModeSection({
       <div className="flex-col" style={{ gap: 8, marginTop: 12 }}>
         {options.map((opt) => {
           const active = opt.id === mode;
+          return (
+            <button
+              key={opt.id}
+              onClick={() => onChange(opt.id)}
+              className={`option-card${active ? " active" : ""}`}
+            >
+              <div className="opt-title">{opt.label}</div>
+              <div className="opt-desc">{opt.description}</div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CodingAgentSection({
+  codingAgent,
+  onChange,
+}: {
+  codingAgent: CodingAgentId;
+  onChange: (id: CodingAgentId) => void;
+}): JSX.Element {
+  const options: Array<{ id: CodingAgentId; label: string; description: string }> = [
+    {
+      id: "claude-code",
+      label: "claude code",
+      description: "runs `claude --print` CLI for each task — must be installed globally",
+    },
+    {
+      id: "gh-copilot",
+      label: "github copilot",
+      description: "runs `gh copilot suggest` CLI — requires GitHub Copilot subscription",
+    },
+    {
+      id: "deepagent",
+      label: "deepagent (built-in)",
+      description: "built-in agent with filesystem tools and plan/explore subagents",
+    },
+  ];
+  return (
+    <div className="divider-t" style={{ paddingTop: 18 }}>
+      <div className="section-title">coding agent</div>
+      <div className="section-subtitle">
+        CLI agent used to execute implementation tasks
+      </div>
+      <div className="flex-col" style={{ gap: 8, marginTop: 12 }}>
+        {options.map((opt) => {
+          const active = opt.id === codingAgent;
           return (
             <button
               key={opt.id}

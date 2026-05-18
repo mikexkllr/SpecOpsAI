@@ -10,6 +10,7 @@ import type {
 const STATUS_LABEL: Record<TaskStatus, string> = {
   pending: "pending",
   "in-progress": "running",
+  "needs-attention": "review",
   done: "done",
 };
 
@@ -21,9 +22,11 @@ interface StoryWorkspaceProps {
   busy: "decompose" | "chat" | "run" | "tests" | null;
   agentMode: AgentMode;
   pendingApproval: string | null;
+  cliBuffer: string;
   onDecompose: () => void;
   onSend: () => void;
   onCycleTask: (taskId: string, current: TaskStatus) => void;
+  onMarkDone: (taskId: string) => void;
   onReset: () => void;
   onRun: () => void;
   onStop: () => void;
@@ -41,9 +44,11 @@ export function StoryWorkspace({
   busy,
   agentMode,
   pendingApproval,
+  cliBuffer,
   onDecompose,
   onSend,
   onCycleTask,
+  onMarkDone,
   onReset,
   onRun,
   onStop,
@@ -55,7 +60,7 @@ export function StoryWorkspace({
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [state?.messages.length, busy]);
+  }, [state?.messages.length, busy, cliBuffer]);
 
   const tasks = state?.tasks ?? [];
 
@@ -177,6 +182,15 @@ export function StoryWorkspace({
                   </div>
                   {t.description && <div className="task-desc">{t.description}</div>}
                 </div>
+                {t.status === "needs-attention" && (
+                  <button
+                    className="btn btn-success btn-sm"
+                    onClick={() => onMarkDone(t.id)}
+                    title="mark this task as done after reviewing the CLI output"
+                  >
+                    mark done
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -200,12 +214,19 @@ export function StoryWorkspace({
         </div>
         {state?.messages.length ? (
           <>
-            {state.messages.map((m, i) => (
-              <div key={i} className={`chat-msg ${m.role}`}>
-                {m.text}
-              </div>
-            ))}
-            {(busy === "chat" || busy === "run" || busy === "tests") && (
+            {state.messages.map((m, i) =>
+              m.role === "terminal" ? (
+                <pre key={i} className="terminal-msg">{m.text}</pre>
+              ) : (
+                <div key={i} className={`chat-msg ${m.role}`}>
+                  {m.text}
+                </div>
+              ),
+            )}
+            {busy === "run" && cliBuffer && (
+              <pre className="terminal-msg terminal-live">{cliBuffer}</pre>
+            )}
+            {(busy === "chat" || busy === "run" || busy === "tests") && !cliBuffer && (
               <div className="chat-msg thinking">
                 {busy === "run"
                   ? "Worker working…"
@@ -216,7 +237,13 @@ export function StoryWorkspace({
             )}
           </>
         ) : (
-          <div className="chat-empty">ask this Worker anything scoped to {story.id}</div>
+          <>
+            {busy === "run" && cliBuffer ? (
+              <pre className="terminal-msg terminal-live">{cliBuffer}</pre>
+            ) : (
+              <div className="chat-empty">ask this Worker anything scoped to {story.id}</div>
+            )}
+          </>
         )}
       </div>
       <div className="chat-input-row">

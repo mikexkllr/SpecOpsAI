@@ -5,11 +5,13 @@ import {
   PROVIDER_DESCRIPTORS,
   type AgentMode,
   type AppSettings,
+  type CodingAgentId,
   type ProviderConfig,
   type ProviderId,
 } from "../shared/api";
 
 const AGENT_MODES: AgentMode[] = ["yolo", "hitl"];
+const CODING_AGENTS: CodingAgentId[] = ["deepagent", "claude-code", "gh-copilot"];
 
 function settingsPath(): string {
   return path.join(app.getPath("userData"), "settings.json");
@@ -28,7 +30,7 @@ function defaultProvider(id: ProviderId): ProviderConfig {
 function defaultSettings(): AppSettings {
   const providers = {} as Record<ProviderId, ProviderConfig>;
   for (const d of PROVIDER_DESCRIPTORS) providers[d.id] = defaultProvider(d.id);
-  return { activeProvider: "anthropic", providers, agentMode: "hitl" };
+  return { activeProvider: "anthropic", providers, agentMode: "hitl", codingAgent: "claude-code" };
 }
 
 function mergeSettings(raw: unknown): AppSettings {
@@ -40,6 +42,9 @@ function mergeSettings(raw: unknown): AppSettings {
   }
   if (r.agentMode && AGENT_MODES.includes(r.agentMode)) {
     base.agentMode = r.agentMode;
+  }
+  if (r.codingAgent && CODING_AGENTS.includes(r.codingAgent)) {
+    base.codingAgent = r.codingAgent;
   }
   if (r.providers && typeof r.providers === "object") {
     for (const d of PROVIDER_DESCRIPTORS) {

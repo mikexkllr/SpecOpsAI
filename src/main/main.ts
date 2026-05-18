@@ -40,6 +40,7 @@ import {
   startTestLoop,
   stopTestLoop,
 } from "./test-loop";
+import { onCliChunk } from "./cliAgent";
 
 const isDev = !app.isPackaged;
 
@@ -172,6 +173,12 @@ app.whenReady().then(() => {
   onTestLoopUpdate((state) => {
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send("testloop:update", state);
+    }
+  });
+
+  onCliChunk((storyId, text) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("worker:cli-chunk", { storyId, text });
     }
   });
 });
