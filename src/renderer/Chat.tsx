@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { Phase } from "./phases";
 import type { AgentActivityItem, AgentStreamEvent } from "../shared/api";
+import { renderMarkdown } from "./markdown";
 
 export interface ChatMessage {
   role: "user" | "agent";
@@ -253,7 +254,11 @@ export function Chat({
             {m.activity && m.activity.length > 0 && (
               <MessageActivity items={m.activity} />
             )}
-            <div className={`chat-msg ${m.role}`}>{m.text}</div>
+            {m.role === "agent" ? (
+              <AgentBubble text={m.text} />
+            ) : (
+              <div className="chat-msg user">{m.text}</div>
+            )}
           </React.Fragment>
         ))}
         {(hasActivity || running) && (
@@ -298,9 +303,7 @@ function ActivityPanel({
       {activity.items.map((item, i) => (
         <ActivityRow key={i} item={item} />
       ))}
-      {activity.liveText && (
-        <div className="chat-msg agent ca-live">{activity.liveText}</div>
-      )}
+      {activity.liveText && <AgentBubble text={activity.liveText} live />}
       {running && empty && <div className="ca-waiting">◌ thinking…</div>}
     </div>
   );
@@ -323,6 +326,18 @@ function MessageActivity({ items }: { items: ActivityItem[] }): JSX.Element {
         {open ? "▾" : "▸"} agent activity · {summary}
       </button>
       {open && items.map((item, i) => <ActivityRow key={i} item={item} />)}
+    </div>
+  );
+}
+
+// Agent replies are markdown; render them (hardened) rather than as plain text.
+// Used for both finished replies and the forming live reply.
+function AgentBubble({ text, live }: { text: string; live?: boolean }): JSX.Element {
+  const html = useMemo(() => renderMarkdown(text), [text]);
+  return (
+    <div className={`chat-msg agent${live ? " ca-live" : ""}`}>
+      <span className="chat-msg-glyph">●</span>
+      <div className="chat-md" dangerouslySetInnerHTML={{ __html: html }} />
     </div>
   );
 }
