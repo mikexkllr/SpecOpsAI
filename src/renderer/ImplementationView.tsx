@@ -277,17 +277,17 @@ export function ImplementationView({
           setStore(s);
           return s[selectedStory.id];
         }));
-      if (!state || state.tasks.length === 0) {
+      if (!state || !state.tasks || state.tasks.length === 0) {
         state = await window.specops.decomposeStory({
           specPath,
           story: selectedStory,
           artifacts: toApiArtifacts(artifacts),
         });
         setStore((s) => ({ ...s, [state!.storyId]: state! }));
-        if (state.error || state.tasks.length === 0) return;
+        if (state.error || !state.tasks || state.tasks.length === 0) return;
       }
       while (!stopRef.current) {
-        const next = state.tasks.find(
+        const next = (state.tasks ?? []).find(
           (t) => t.status !== "done" && t.status !== "needs-attention",
         );
         if (!next) break;
@@ -299,6 +299,24 @@ export function ImplementationView({
           return;
         }
       }
+    } catch (err) {
+      // Without this, a rejected IPC call (e.g. decompose/run throwing in the
+      // main process) is swallowed as an unhandled rejection and the UI shows
+      // nothing at all. Surface it on the selected story instead.
+      console.error("[SpecOps] runStory failed:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      setStore((s) => {
+        const prev: WorkerState = s[selectedStory.id] ?? {
+          storyId: selectedStory.id,
+          tasks: [],
+          messages: [],
+          status: "idle",
+        };
+        return {
+          ...s,
+          [selectedStory.id]: { ...prev, status: "idle", error: `Run failed: ${message}` },
+        };
+      });
     } finally {
       setBusy((b) => (b === "run" ? null : b));
     }

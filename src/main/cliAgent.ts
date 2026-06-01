@@ -1,10 +1,34 @@
 import { spawn } from "node:child_process";
+import * as os from "node:os";
+import * as path from "node:path";
 import type {
   ArtifactFiles,
   CodingAgentId,
   TaskChunk,
   TechnicalStory,
 } from "../shared/api";
+
+/**
+ * A GUI Electron app (launched from Finder/dock) inherits a stripped PATH that
+ * usually omits user-local install dirs like ~/.local/bin or ~/.npm-global/bin,
+ * so `spawn("claude")` fails with ENOENT even when the CLI is installed. Prepend
+ * the common locations so the coding-agent binaries resolve regardless of how
+ * the app was launched.
+ */
+function spawnEnv(): NodeJS.ProcessEnv {
+  const home = os.homedir();
+  const extras = [
+    path.join(home, ".local", "bin"),
+    path.join(home, ".npm-global", "bin"),
+    path.join(home, ".bun", "bin"),
+    path.join(home, ".volta", "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+  ];
+  const current = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+  const merged = [...extras.filter((p) => !current.includes(p)), ...current];
+  return { ...process.env, PATH: merged.join(path.delimiter) };
+}
 
 const chunkListeners: Array<(storyId: string, text: string) => void> = [];
 
@@ -18,6 +42,15 @@ export function onCliChunk(cb: (storyId: string, text: string) => void): () => v
 
 function emitChunk(storyId: string, text: string): void {
   for (const cb of chunkListeners) cb(storyId, text);
+}
+
+/**
+ * Push a status line into a story's live terminal stream (e.g. "reviewing
+ * changes…") without it becoming part of the captured CLI output. Lets callers
+ * like runWorkerTask give the UI feedback between the CLI and reviewer phases.
+ */
+export function emitWorkerStatus(storyId: string, text: string): void {
+  emitChunk(storyId, text);
 }
 
 export interface CliAgentOptions {
@@ -65,22 +98,72 @@ export async function runCliAgent(opts: CliAgentOptions): Promise<string> {
   }
 
   return new Promise<string>((resolve, reject) => {
-    const proc = spawn(cmd, args, { cwd, env: { ...process.env } });
+    // Guard so a spawn failure (e.g. ENOENT when the binary isn't installed)
+    // can only settle the promise once, even if both the stdin stream and the
+    // child process emit 'error'.
+    let settled = false;
+    const settleResolve = (val: string): void => {
+      if (!settled) {
+        settled = true;
+        resolve(val);
+      }
+    };
+    const settleReject = (err: Error): void => {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    };
 
-    if (stdinPrompt !== null) {
-      proc.stdin?.write(stdinPrompt);
+    // Tell the UI immediately that the agent is launching, so the run doesn't
+    // look idle while a buffered CLI (e.g. `claude --print`) thinks.
+    emitChunk(storyId, `▶ ${agentId} starting…\n`);
+
+    let proc: ReturnType<typeof spawn>;
+    try {
+      proc = spawn(cmd, args, { cwd, env: spawnEnv() });
+    } catch (err) {
+      const message = (err as Error).message;
+      emitChunk(storyId, `\n[error] could not start '${cmd}': ${message}\n`);
+      settleReject(new Error(`Failed to start CLI agent '${cmd}': ${message}`));
+      return;
     }
-    proc.stdin?.end();
+
+    // The child can fail asynchronously (ENOENT) — surface it as a clean
+    // rejection plus a visible terminal line instead of an unhandled error.
+    proc.on("error", (err) => {
+      emitChunk(storyId, `\n[error] failed to start '${cmd}': ${err.message}\n`);
+      settleReject(new Error(`Failed to start CLI agent '${cmd}': ${err.message}`));
+    });
+
+    // Writing the prompt before the 'error' event fires can emit EPIPE on stdin
+    // for a process that never spawned — swallow it; proc 'error' is the source
+    // of truth.
+    proc.stdin?.on("error", () => {
+      /* surfaced via proc 'error' */
+    });
+    if (stdinPrompt !== null) {
+      try {
+        proc.stdin?.write(stdinPrompt);
+      } catch {
+        /* surfaced via proc 'error' */
+      }
+    }
+    try {
+      proc.stdin?.end();
+    } catch {
+      /* surfaced via proc 'error' */
+    }
 
     let output = "";
 
-    proc.stdout.on("data", (data: Buffer) => {
+    proc.stdout?.on("data", (data: Buffer) => {
       const text = data.toString();
       output += text;
       emitChunk(storyId, text);
     });
 
-    proc.stderr.on("data", (data: Buffer) => {
+    proc.stderr?.on("data", (data: Buffer) => {
       const text = data.toString();
       output += text;
       emitChunk(storyId, text);
@@ -88,15 +171,11 @@ export async function runCliAgent(opts: CliAgentOptions): Promise<string> {
 
     proc.on("close", (code) => {
       if (code !== 0 && !output.trim()) {
-        reject(new Error(`CLI agent exited with code ${code}`));
+        settleReject(new Error(`CLI agent exited with code ${code}`));
         return;
       }
       const result = output || "(no output)";
-      resolve(code !== 0 ? result + `\n[exited with code ${code}]` : result);
-    });
-
-    proc.on("error", (err) => {
-      reject(new Error(`Failed to start CLI agent '${cmd}': ${err.message}`));
+      settleResolve(code !== 0 ? result + `\n[exited with code ${code}]` : result);
     });
 
     signal?.addEventListener("abort", () => {
@@ -111,7 +190,7 @@ export async function runCliAgent(opts: CliAgentOptions): Promise<string> {
       proc.once("close", () => clearTimeout(killTimer));
       const err = new Error("AbortError");
       err.name = "AbortError";
-      reject(err);
+      settleReject(err);
     });
   });
 }

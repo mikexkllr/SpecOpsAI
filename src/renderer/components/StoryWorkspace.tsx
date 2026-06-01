@@ -273,21 +273,21 @@ export function StoryWorkspace({
             {(busy === "chat" || busy === "run" || busy === "tests") && !cliBuffer && (
               <div className="chat-msg thinking">
                 {busy === "run"
-                  ? "reviewing…"
+                  ? "running agent…"
                   : busy === "tests"
                     ? "generating unit tests…"
                     : "thinking…"}
               </div>
             )}
           </>
+        ) : busy === "run" ? (
+          cliBuffer ? (
+            <pre className="terminal-msg terminal-live">{cliBuffer}</pre>
+          ) : (
+            <div className="chat-msg thinking">running agent…</div>
+          )
         ) : (
-          <>
-            {busy === "run" && cliBuffer ? (
-              <pre className="terminal-msg terminal-live">{cliBuffer}</pre>
-            ) : (
-              <div className="chat-empty">ask this Worker anything scoped to {story.id}</div>
-            )}
-          </>
+          <div className="chat-empty">ask this Worker anything scoped to {story.id}</div>
         )}
       </div>
       <div className="chat-input-row">

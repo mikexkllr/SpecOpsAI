@@ -28,7 +28,7 @@ import {
   testGenSubagents,
 } from "./workerSubagents";
 import { loadDeps } from "./deepagentsDeps";
-import { runCliAgent, buildCliTaskPrompt } from "./cliAgent";
+import { runCliAgent, buildCliTaskPrompt, emitWorkerStatus } from "./cliAgent";
 import { runReviewerAgent } from "./reviewer";
 import { projectRoot, lastAssistantText, isAbortError } from "./utils";
 
@@ -425,6 +425,7 @@ export async function runWorkerTask(
     await saveStore(req.specPath, store);
 
     // Run reviewer deepagent on the CLI agent's changes
+    emitWorkerStatus(req.story.id, "\n▶ reviewing changes…\n");
     const reviewResult = await runReviewerAgent({
       specPath: req.specPath,
       story: req.story,
