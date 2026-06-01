@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { BaseMessage } from "@langchain/core/messages";
 import type {
+  AgentStreamEvent,
   AgentTurn,
   AgentTurnRequest,
   AgentTurnResult,
@@ -13,6 +14,24 @@ import { buildChatModel } from "./models";
 import { workerSubagents } from "./workerSubagents";
 import { loadDeps } from "./deepagentsDeps";
 import { projectRoot, lastAssistantText } from "./utils";
+
+// --- live event stream ----------------------------------------------------
+// Mirrors cliAgent's onCliChunk pattern: main.ts subscribes once and rebroadcasts
+// over the `agent:event` IPC channel to every renderer window.
+type AgentEventListener = (event: AgentStreamEvent) => void;
+const agentEventListeners: AgentEventListener[] = [];
+
+export function onAgentEvent(cb: AgentEventListener): () => void {
+  agentEventListeners.push(cb);
+  return () => {
+    const i = agentEventListeners.indexOf(cb);
+    if (i >= 0) agentEventListeners.splice(i, 1);
+  };
+}
+
+function emitAgentEvent(event: AgentStreamEvent): void {
+  for (const cb of agentEventListeners) cb(event);
+}
 
 interface PhaseConfig {
   artifact: keyof ArtifactFiles;
@@ -156,6 +175,137 @@ async function readArtifactFromDisk(
   }
 }
 
+const MAX_TOOL_OUTPUT = 4000;
+
+// Pull human-readable text and reasoning out of a (possibly chunked) message.
+// Content shape varies by provider: a plain string, or an array of typed blocks
+// (`text` / `thinking` / `reasoning`), and some providers stash reasoning in
+// additional_kwargs instead. We extract both defensively and let empty strings
+// be skipped by the caller.
+function extractMessageDeltas(msg: BaseMessage): { text: string; thinking: string } {
+  let text = "";
+  let thinking = "";
+  const content = (msg as { content?: unknown }).content;
+  if (typeof content === "string") {
+    text += content;
+  } else if (Array.isArray(content)) {
+    for (const block of content) {
+      if (typeof block === "string") {
+        text += block;
+        continue;
+      }
+      const b = block as Record<string, unknown>;
+      const type = b.type;
+      if (type === "text" || type === "text_delta") {
+        text += (b.text as string) ?? "";
+      } else if (type === "thinking" || type === "reasoning" || type === "reasoning_content") {
+        thinking +=
+          (b.thinking as string) ?? (b.reasoning as string) ?? (b.text as string) ?? "";
+      }
+    }
+  }
+  const ak = (msg as { additional_kwargs?: Record<string, unknown> }).additional_kwargs;
+  const reasoning = ak?.reasoning_content;
+  if (typeof reasoning === "string") thinking += reasoning;
+  return { text, thinking };
+}
+
+function stringifyToolOutput(output: unknown): string {
+  let text: string;
+  if (typeof output === "string") {
+    text = output;
+  } else if (output && typeof output === "object") {
+    const content = (output as { content?: unknown }).content;
+    text =
+      typeof content === "string"
+        ? content
+        : (() => {
+            try {
+              return JSON.stringify(content ?? output);
+            } catch {
+              return String(output);
+            }
+          })();
+  } else {
+    text = String(output ?? "");
+  }
+  return text.length > MAX_TOOL_OUTPUT
+    ? text.slice(0, MAX_TOOL_OUTPUT) + `\n… (+${text.length - MAX_TOOL_OUTPUT} chars)`
+    : text;
+}
+
+// Runs the agent with live streaming, emitting thinking / text / tool events as
+// they arrive, and returns the top-level messages so the caller can derive the
+// final reply. `subgraphs: true` surfaces nested subagent activity too; we tag
+// every event with the subgraph depth. When turnId is undefined we still stream
+// (to collect the reply) but suppress events.
+async function streamAgentTurn(
+  agent: { stream: (input: unknown, options: unknown) => Promise<AsyncIterable<unknown>> },
+  lcMessages: BaseMessage[],
+  turnId: string | undefined,
+): Promise<{ messages?: BaseMessage[] }> {
+  // The last top-level "values" emission is the complete final state — the same
+  // object agent.invoke() would have resolved to — so we derive the reply from it.
+  let finalState: { messages?: BaseMessage[] } = {};
+  const stream = await agent.stream(
+    { messages: lcMessages },
+    { streamMode: ["messages", "tools", "values"], subgraphs: true },
+  );
+
+  for await (const event of stream) {
+    // With subgraphs:true + array streamMode each item is [namespace, mode, data].
+    const tuple = event as unknown[];
+    const [ns, mode, data] =
+      tuple.length >= 3
+        ? (tuple as [string[], string, unknown])
+        : ([[], tuple[0], tuple[1]] as [string[], string, unknown]);
+    const depth = Array.isArray(ns) ? ns.length : 0;
+
+    if (mode === "messages") {
+      const [msg] = data as [BaseMessage, Record<string, unknown>];
+      const type = (msg as { _getType?: () => string })._getType?.();
+      if (type !== "ai") continue;
+      if (!turnId) continue;
+      const { text, thinking } = extractMessageDeltas(msg);
+      if (thinking) emitAgentEvent({ turnId, depth, kind: "thinking", text: thinking });
+      if (text) emitAgentEvent({ turnId, depth, kind: "text", text });
+    } else if (mode === "tools") {
+      if (!turnId) continue;
+      const ev = data as {
+        event: string;
+        name: string;
+        toolCallId?: string;
+        input?: unknown;
+        output?: unknown;
+      };
+      if (ev.event === "on_tool_start") {
+        emitAgentEvent({
+          turnId,
+          depth,
+          kind: "tool-start",
+          name: ev.name,
+          input: ev.input,
+          toolCallId: ev.toolCallId,
+        });
+      } else if (ev.event === "on_tool_end") {
+        emitAgentEvent({
+          turnId,
+          depth,
+          kind: "tool-end",
+          name: ev.name,
+          output: stringifyToolOutput(ev.output),
+          toolCallId: ev.toolCallId,
+        });
+      }
+    } else if (mode === "values" && depth === 0) {
+      // Full state snapshot from the top-level graph; last one wins.
+      finalState = (data as { messages?: BaseMessage[] }) ?? finalState;
+    }
+  }
+
+  return finalState;
+}
+
 export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurnResult> {
   const phaseCfg = PHASE_CONFIG[req.phase];
   const system = buildSystemPrompt(req.phase, req.artifacts, req.specPath);
@@ -185,8 +335,14 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurnResu
         }),
       subagents: workerSubagents,
     });
-    const result = await agent.invoke({ messages: lcMessages });
-    const reply = lastAssistantText(result) || "(no reply)";
+    const finalState = await streamAgentTurn(
+      agent as unknown as {
+        stream: (input: unknown, options: unknown) => Promise<AsyncIterable<unknown>>;
+      },
+      lcMessages,
+      req.turnId,
+    );
+    const reply = lastAssistantText(finalState) || "(no reply)";
 
     const after = await readArtifactFromDisk(req.specPath, phaseCfg.artifact);
     const changed = after !== null && after !== baseline;

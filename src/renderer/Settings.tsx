@@ -5,7 +5,9 @@ import {
   type AppSettings,
   type CodingAgentId,
   type ProviderConfig,
+  type ProviderDescriptor,
   type ProviderId,
+  type ThinkingConfig,
 } from "../shared/api";
 
 interface Props {
@@ -188,6 +190,88 @@ function ProviderForm({
             onChange={(e) => onChange({ apiKey: e.target.value })}
             placeholder="stored on this device"
           />
+        </Field>
+      )}
+
+      <ThinkingField
+        descriptor={d}
+        thinking={cfg.thinking}
+        onChange={(thinking) => onChange({ thinking })}
+      />
+    </div>
+  );
+}
+
+function ThinkingField({
+  descriptor,
+  thinking,
+  onChange,
+}: {
+  descriptor: ProviderDescriptor;
+  thinking?: ThinkingConfig;
+  onChange: (t: ThinkingConfig) => void;
+}): JSX.Element | null {
+  if (descriptor.thinking === "none") return null;
+  const enabled = thinking?.enabled === true;
+  const budget = thinking?.budgetTokens ?? descriptor.defaultThinkingBudget ?? 2048;
+  const effort = thinking?.effort ?? "medium";
+
+  const hint: Record<Exclude<ProviderDescriptor["thinking"], "none">, string> = {
+    budget: "stream the model's reasoning; higher budget = deeper thinking, more tokens",
+    effort: "reasoning models only (o-series, gpt-5…) — ignored by gpt-4o and similar",
+    toggle: "ask Ollama to emit reasoning — only works on models that support it",
+  };
+
+  return (
+    <div className="field" style={{ gap: 8 }}>
+      <label className="thinking-toggle">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => onChange({ enabled: e.target.checked, budgetTokens: budget, effort })}
+        />
+        <span className="field-label" style={{ margin: 0 }}>
+          extended thinking
+        </span>
+      </label>
+      <div className="section-subtitle" style={{ marginTop: 0 }}>
+        {hint[descriptor.thinking]}
+      </div>
+
+      {enabled && descriptor.thinking === "budget" && (
+        <Field label="thinking budget (tokens)">
+          <input
+            type="number"
+            min={1024}
+            step={512}
+            value={budget}
+            onChange={(e) =>
+              onChange({
+                enabled,
+                budgetTokens: Math.max(1024, Number(e.target.value) || 1024),
+                effort,
+              })
+            }
+          />
+        </Field>
+      )}
+
+      {enabled && descriptor.thinking === "effort" && (
+        <Field label="reasoning effort">
+          <select
+            value={effort}
+            onChange={(e) =>
+              onChange({
+                enabled,
+                budgetTokens: budget,
+                effort: e.target.value as ThinkingConfig["effort"],
+              })
+            }
+          >
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
         </Field>
       )}
     </div>

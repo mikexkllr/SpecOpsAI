@@ -7,7 +7,9 @@ import {
   type AppSettings,
   type CodingAgentId,
   type ProviderConfig,
+  type ProviderDescriptor,
   type ProviderId,
+  type ThinkingConfig,
 } from "../shared/api";
 
 const AGENT_MODES: AgentMode[] = ["yolo", "hitl"];
@@ -17,6 +19,41 @@ function settingsPath(): string {
   return path.join(app.getPath("userData"), "settings.json");
 }
 
+function defaultThinking(d: ProviderDescriptor): ThinkingConfig | undefined {
+  switch (d.thinking) {
+    case "budget":
+      return { enabled: false, budgetTokens: d.defaultThinkingBudget ?? 2048 };
+    case "effort":
+      return { enabled: false, effort: "medium" };
+    case "toggle":
+      return { enabled: false };
+    default:
+      return undefined;
+  }
+}
+
+// Validate a stored thinking config against what the provider actually supports,
+// falling back to the descriptor's default so old/garbage values can't break it.
+function mergeThinking(raw: unknown, d: ProviderDescriptor): ThinkingConfig | undefined {
+  const base = defaultThinking(d);
+  if (!base || !raw || typeof raw !== "object") return base;
+  const r = raw as Partial<ThinkingConfig>;
+  const out: ThinkingConfig = { enabled: r.enabled === true };
+  if (d.thinking === "budget") {
+    out.budgetTokens =
+      typeof r.budgetTokens === "number" && r.budgetTokens > 0
+        ? Math.floor(r.budgetTokens)
+        : base.budgetTokens;
+  }
+  if (d.thinking === "effort") {
+    out.effort =
+      r.effort === "low" || r.effort === "medium" || r.effort === "high"
+        ? r.effort
+        : base.effort;
+  }
+  return out;
+}
+
 function defaultProvider(id: ProviderId): ProviderConfig {
   const d = PROVIDER_DESCRIPTORS.find((p) => p.id === id)!;
   return {
@@ -24,6 +61,7 @@ function defaultProvider(id: ProviderId): ProviderConfig {
     model: d.defaultModel,
     apiKey: d.needsApiKey ? "" : undefined,
     baseUrl: d.defaultBaseUrl,
+    thinking: defaultThinking(d),
   };
 }
 
@@ -61,6 +99,7 @@ function mergeSettings(raw: unknown): AppSettings {
             typeof saved.baseUrl === "string" && saved.baseUrl
               ? saved.baseUrl
               : d.defaultBaseUrl,
+          thinking: mergeThinking(saved.thinking, d),
         };
       }
     }

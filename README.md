@@ -178,6 +178,40 @@ The agent's final assistant message is returned verbatim as the chat `reply`.
 There is no XML fencing — the old `<artifact>` / `<reply>` protocol has been
 replaced end-to-end by the pre/post disk-diff on the artifact file.
 
+**Live streaming.** While the turn runs, the chat shows everything the deep
+agent emits in real time — intermediate reasoning, the reply forming token by
+token, and every tool call (`read_file`, `grep`, `write_file`, the `task`
+delegation, …) with its arguments and result. `runAgentTurn`
+([agent.ts](src/main/agent.ts)) drives the agent with LangGraph's
+`stream({ streamMode: ["messages", "tools", "values"], subgraphs: true })`
+instead of `invoke`, translating the raw stream into a small
+[`AgentStreamEvent`](src/shared/api.ts) union (`thinking` / `text` /
+`tool-start` / `tool-end`, each tagged with a subgraph `depth` so nested
+subagent work is surfaced too). Events are pushed over the `agent:event` IPC
+channel (broadcast in [main.ts](src/main/main.ts), subscribed via
+`onAgentEvent` in [preload.ts](src/preload/preload.ts)) and rendered as a live
+"agent activity" panel in [Chat.tsx](src/renderer/Chat.tsx). Each turn carries
+a renderer-generated `turnId` so events route to the right phase; the final
+`reply` is derived from the last `values` state snapshot exactly as `invoke`
+would have returned it.
+
+**Trace persistence.** When the turn finishes, the captured trace is attached
+to the agent turn as `AgentTurn.activity` ([api.ts](src/shared/api.ts)) and
+saved to `chats.json` alongside the reply, so reopening a spec replays the
+thinking + tool calls (collapsed by default under each reply). Tool outputs are
+capped before persisting to keep the file small. Older chats without a trace
+load fine — `activity` is optional.
+
+**Thinking is configurable per provider.** Each provider has a thinking control
+in Settings ([Settings.tsx](src/renderer/Settings.tsx)) whose shape is declared
+by `ProviderDescriptor.thinking` ([api.ts](src/shared/api.ts)): a token budget
+for Anthropic / Gemini, a low/medium/high effort for OpenAI reasoning models,
+or a plain on/off for Ollama. [`buildChatModel`](src/main/models.ts) maps the
+saved `ThinkingConfig` to each SDK's native option (`thinking.budget_tokens`,
+`thinkingConfig.thinkingBudget`, `reasoningEffort`, `think`). With Anthropic /
+Gemini thinking on, the reasoning streams straight into the activity panel
+above.
+
 ### 1. Spec phase
 
 - **What you see:** the `spec.md` markdown editor on the left and a chat panel on the right ([PhaseView.tsx:13-23](src/renderer/PhaseView.tsx#L13-L23)).
@@ -451,7 +485,7 @@ so changing it in Settings takes effect on the next message.
 
 | File | Purpose |
 |---|---|
-| [preload.ts](src/preload/preload.ts) | Exposes a typed `window.specops` (the `SpecOpsApi` interface from `shared/api.ts`) using `contextBridge`. Every method is a thin `ipcRenderer.invoke` wrapper, except `onTestLoopUpdate`, which subscribes to the pushed `testloop:update` channel and returns an unsubscribe function. |
+| [preload.ts](src/preload/preload.ts) | Exposes a typed `window.specops` (the `SpecOpsApi` interface from `shared/api.ts`) using `contextBridge`. Every method is a thin `ipcRenderer.invoke` wrapper, except the push-channel subscribers — `onTestLoopUpdate` (`testloop:update`), `onCliChunk` (`worker:cli-chunk`), and `onAgentEvent` (`agent:event`, the live phase-chat stream) — which register a listener and return an unsubscribe function. |
 
 ### Renderer — `src/renderer/`
 

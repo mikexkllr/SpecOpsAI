@@ -1,6 +1,19 @@
 import React, { useEffect, useRef, useState, useMemo } from "react";
-import type { AgentTurn, ArtifactFiles, ChatHistory, ProjectInfo, SpecInfo } from "../shared/api";
-import { Chat, type ChatMessage } from "./Chat";
+import type {
+  AgentActivityItem,
+  AgentTurn,
+  ArtifactFiles,
+  ChatHistory,
+  ProjectInfo,
+  SpecInfo,
+} from "../shared/api";
+import {
+  Chat,
+  EMPTY_PHASE_ACTIVITY,
+  reduceActivity,
+  type ChatMessage,
+  type PhaseActivity,
+} from "./Chat";
 import { ImplementationView } from "./ImplementationView";
 import { PhaseNav } from "./PhaseNav";
 import { PhaseView } from "./PhaseView";
@@ -34,6 +47,24 @@ const EMPTY_MESSAGES: Record<Phase, ChatMessage[]> = {
   implementation: [],
 };
 
+const EMPTY_ACTIVITY: Record<Phase, PhaseActivity> = {
+  spec: EMPTY_PHASE_ACTIVITY,
+  "user-story": EMPTY_PHASE_ACTIVITY,
+  "technical-story": EMPTY_PHASE_ACTIVITY,
+  implementation: EMPTY_PHASE_ACTIVITY,
+};
+
+// Keep persisted tool outputs bounded so chats.json doesn't balloon with large
+// file reads — the live view already showed the fuller text.
+const PERSIST_TOOL_OUTPUT_CAP = 1500;
+function trimForPersist(items: AgentActivityItem[]): AgentActivityItem[] {
+  return items.map((it) =>
+    it.kind === "tool" && it.output && it.output.length > PERSIST_TOOL_OUTPUT_CAP
+      ? { ...it, output: it.output.slice(0, PERSIST_TOOL_OUTPUT_CAP) + "…" }
+      : it,
+  );
+}
+
 export function App(): JSX.Element {
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [activeSpec, setActiveSpec] = useState<SpecInfo | null>(null);
@@ -42,15 +73,35 @@ export function App(): JSX.Element {
   const [messagesByPhase, setMessagesByPhase] =
     useState<Record<Phase, ChatMessage[]>>(EMPTY_MESSAGES);
   const [pending, setPending] = useState(false);
+  const [activityByPhase, setActivityByPhase] =
+    useState<Record<Phase, PhaseActivity>>(EMPTY_ACTIVITY);
+  const [runningPhase, setRunningPhase] = useState<Phase | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const saveTimers = useRef<Partial<Record<keyof Artifacts, number>>>({});
+  // The turn whose streamed `agent:event`s we should route into activity state.
+  const activeTurn = useRef<{ turnId: string; phase: Phase } | null>(null);
+  // Mirror of the in-flight turn's activity, so we can read the final trace
+  // synchronously when the turn resolves (state updates are async).
+  const liveActivity = useRef<PhaseActivity>(EMPTY_PHASE_ACTIVITY);
   // True until the saved session has been restored, so the session-persist
   // effect below doesn't overwrite it with the initial empty state on launch.
   const restoring = useRef(true);
 
   useEffect(() => {
     window.specops.getSettings().then(setSettings);
+  }, []);
+
+  // Route live agent events into the activity state of the turn that produced
+  // them. Subscribe once; `activeTurn` is a ref so this handler stays stable.
+  useEffect(() => {
+    return window.specops.onAgentEvent((event) => {
+      const active = activeTurn.current;
+      if (!active || event.turnId !== active.turnId) return;
+      const next = reduceActivity(liveActivity.current, event);
+      liveActivity.current = next;
+      setActivityByPhase((prev) => ({ ...prev, [active.phase]: next }));
+    });
   }, []);
 
   // Restore the last project / spec / phase on launch.
@@ -88,6 +139,7 @@ export function App(): JSX.Element {
   }, [project, activeSpec, phase]);
 
   useEffect(() => {
+    setActivityByPhase(EMPTY_ACTIVITY);
     if (!activeSpec) {
       setArtifacts(EMPTY_ARTIFACTS);
       setMessagesByPhase(EMPTY_MESSAGES);
@@ -162,6 +214,11 @@ export function App(): JSX.Element {
     const afterUser = { ...base, [phase]: withUser };
     setMessagesByPhase(afterUser);
     void window.specops.writeChat(specPath, afterUser);
+    const turnId = crypto.randomUUID();
+    activeTurn.current = { turnId, phase };
+    liveActivity.current = EMPTY_PHASE_ACTIVITY;
+    setActivityByPhase((a) => ({ ...a, [phase]: EMPTY_PHASE_ACTIVITY }));
+    setRunningPhase(phase);
     setPending(true);
     try {
       const result = await window.specops.agentChat({
@@ -170,6 +227,7 @@ export function App(): JSX.Element {
         artifacts,
         history,
         message: text,
+        turnId,
       });
       if (result.artifact) {
         const artifactKey = RENDERER_ARTIFACT_KEYS[result.artifact.key];
@@ -177,24 +235,42 @@ export function App(): JSX.Element {
           flush: true,
         });
       }
+      const trace = trimForPersist(liveActivity.current.items);
       const afterAgent = {
         ...afterUser,
-        [phase]: [...withUser, { role: "agent" as const, text: result.reply }],
+        [phase]: [
+          ...withUser,
+          {
+            role: "agent" as const,
+            text: result.reply,
+            activity: trace.length ? trace : undefined,
+          },
+        ],
       };
       setMessagesByPhase(afterAgent);
       void window.specops.writeChat(specPath, afterAgent);
     } catch (err) {
+      const trace = trimForPersist(liveActivity.current.items);
       const afterError = {
         ...afterUser,
         [phase]: [
           ...withUser,
-          { role: "agent" as const, text: `Agent error: ${(err as Error).message}` },
+          {
+            role: "agent" as const,
+            text: `Agent error: ${(err as Error).message}`,
+            activity: trace.length ? trace : undefined,
+          },
         ],
       };
       setMessagesByPhase(afterError);
       void window.specops.writeChat(specPath, afterError);
     } finally {
       setPending(false);
+      setRunningPhase(null);
+      activeTurn.current = null;
+      // The trace now lives on the agent turn; clear the live panel.
+      liveActivity.current = EMPTY_PHASE_ACTIVITY;
+      setActivityByPhase((a) => ({ ...a, [phase]: EMPTY_PHASE_ACTIVITY }));
     }
   }
 
@@ -281,6 +357,8 @@ export function App(): JSX.Element {
                 messages={messagesByPhase[phase]}
                 onSend={sendMessage}
                 pending={pending}
+                activity={activityByPhase[phase]}
+                running={runningPhase === phase}
               />
             </div>
           )}

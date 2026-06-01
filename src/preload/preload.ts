@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { ArtifactFiles, SpecOpsApi, TestLoopState } from "../shared/api";
+import type {
+  AgentStreamEvent,
+  ArtifactFiles,
+  SpecOpsApi,
+  TestLoopState,
+} from "../shared/api";
 
 const api: SpecOpsApi = {
   version: "0.1.0",
@@ -17,6 +22,14 @@ const api: SpecOpsApi = {
   writeArtifact: (specPath, artifact: keyof ArtifactFiles, content) =>
     ipcRenderer.invoke("spec:write", specPath, artifact, content),
   agentChat: (request) => ipcRenderer.invoke("agent:chat", request),
+  onAgentEvent: (callback: (event: AgentStreamEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, event: AgentStreamEvent) =>
+      callback(event);
+    ipcRenderer.on("agent:event", handler);
+    return () => {
+      ipcRenderer.removeListener("agent:event", handler);
+    };
+  },
   readWorkers: (specPath) => ipcRenderer.invoke("worker:read", specPath),
   decomposeStory: (request) => ipcRenderer.invoke("worker:decompose", request),
   workerChat: (request) => ipcRenderer.invoke("worker:chat", request),

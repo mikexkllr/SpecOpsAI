@@ -15,7 +15,7 @@ import type {
   WorkerDecomposeRequest,
   WorkerRunTaskRequest,
 } from "../shared/api";
-import { runAgentTurn } from "./agent";
+import { runAgentTurn, onAgentEvent } from "./agent";
 import {
   checkMergeReadiness,
   createSpec,
@@ -212,6 +212,12 @@ app.whenReady().then(() => {
   onCliChunk((storyId, text) => {
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send("worker:cli-chunk", { storyId, text });
+    }
+  });
+
+  onAgentEvent((event) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("agent:event", event);
     }
   });
 });

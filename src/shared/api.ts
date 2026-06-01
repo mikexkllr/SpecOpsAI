@@ -21,9 +21,27 @@ export interface ArtifactFiles {
 
 export type Phase = "spec" | "user-story" | "technical-story" | "implementation";
 
+// One entry in a persisted agent-turn trace: reasoning ("thinking"), nested
+// subagent visible text ("subtext"), or a tool call. Mirrors the live activity
+// the chat renders while a turn runs, so it can be saved and replayed.
+export type AgentActivityItem =
+  | { kind: "thinking"; depth: number; text: string }
+  | { kind: "subtext"; depth: number; text: string }
+  | {
+      kind: "tool";
+      depth: number;
+      name: string;
+      input?: unknown;
+      output?: string;
+      done: boolean;
+      toolCallId?: string;
+    };
+
 export interface AgentTurn {
   role: "user" | "agent";
   text: string;
+  // Present on agent turns only: the captured thinking / tool-call trace.
+  activity?: AgentActivityItem[];
 }
 
 export interface SessionState {
@@ -41,12 +59,26 @@ export interface AgentTurnRequest {
   artifacts: ArtifactFiles;
   history: AgentTurn[];
   message: string;
+  // Correlates the live `agent:event` stream below with this turn. The renderer
+  // generates it; the main process stamps every streamed event with it.
+  turnId?: string;
 }
 
 export interface AgentTurnResult {
   reply: string;
   artifact?: { key: keyof ArtifactFiles; content: string };
 }
+
+// Live events emitted while a phase agent turn is running, so the UI can show
+// intermediate thinking, streaming reply text, and tool calls as they happen.
+// `depth` is 0 for the top-level agent and >0 for nested deepagents subagents
+// (work delegated through the built-in `task` tool).
+export type AgentStreamEvent = { turnId: string; depth: number } & (
+  | { kind: "thinking"; text: string }
+  | { kind: "text"; text: string }
+  | { kind: "tool-start"; name: string; input: unknown; toolCallId?: string }
+  | { kind: "tool-end"; name: string; output: string; toolCallId?: string }
+);
 
 export interface TechnicalStory {
   id: string;
@@ -222,11 +254,26 @@ export interface MergeResult {
 
 export type ProviderId = "anthropic" | "openai" | "google" | "ollama";
 
+// How a provider exposes extended thinking / reasoning, and thus which control
+// the Settings form renders for it:
+//   budget → on/off + a token budget   (Anthropic, Gemini)
+//   effort → on/off + low/medium/high  (OpenAI reasoning models)
+//   toggle → on/off only               (Ollama)
+//   none   → not configurable
+export type ThinkingControl = "budget" | "effort" | "toggle" | "none";
+
+export interface ThinkingConfig {
+  enabled: boolean;
+  budgetTokens?: number; // budget-style providers
+  effort?: "low" | "medium" | "high"; // effort-style providers
+}
+
 export interface ProviderConfig {
   id: ProviderId;
   model: string;
   apiKey?: string;
   baseUrl?: string;
+  thinking?: ThinkingConfig;
 }
 
 export type AgentMode = "yolo" | "hitl";
@@ -247,6 +294,8 @@ export interface ProviderDescriptor {
   defaultModel: string;
   suggestedModels: string[];
   description: string;
+  thinking: ThinkingControl;
+  defaultThinkingBudget?: number; // for budget-style providers
 }
 
 export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
@@ -257,6 +306,8 @@ export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
     defaultModel: "claude-sonnet-4-5",
     suggestedModels: ["claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5"],
     description: "Claude models via api.anthropic.com.",
+    thinking: "budget",
+    defaultThinkingBudget: 2048,
   },
   {
     id: "openai",
@@ -266,6 +317,7 @@ export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
     defaultModel: "gpt-4o",
     suggestedModels: ["gpt-4o", "gpt-4o-mini", "o1-mini"],
     description: "OpenAI Chat Completions API (or any compatible endpoint).",
+    thinking: "effort",
   },
   {
     id: "google",
@@ -275,6 +327,8 @@ export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
     defaultModel: "gemini-2.5-pro",
     suggestedModels: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-pro"],
     description: "Gemini models via Google Generative Language API.",
+    thinking: "budget",
+    defaultThinkingBudget: 2048,
   },
   {
     id: "ollama",
@@ -284,6 +338,7 @@ export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
     defaultModel: "llama3.1",
     suggestedModels: ["llama3.1", "qwen2.5-coder", "mistral"],
     description: "Local models via Ollama.",
+    thinking: "toggle",
   },
 ];
 
@@ -304,6 +359,7 @@ export interface SpecOpsApi {
     content: string,
   ): Promise<void>;
   agentChat(request: AgentTurnRequest): Promise<AgentTurnResult>;
+  onAgentEvent(callback: (event: AgentStreamEvent) => void): () => void;
   readWorkers(specPath: string): Promise<WorkerStore>;
   decomposeStory(request: WorkerDecomposeRequest): Promise<WorkerState>;
   workerChat(request: WorkerChatRequest): Promise<WorkerState>;

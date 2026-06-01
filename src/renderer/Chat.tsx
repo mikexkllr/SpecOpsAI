@@ -1,9 +1,129 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { Phase } from "./phases";
+import type { AgentActivityItem, AgentStreamEvent } from "../shared/api";
 
 export interface ChatMessage {
   role: "user" | "agent";
   text: string;
+  // Persisted thinking / tool-call trace for an agent reply (see chat.ts).
+  activity?: AgentActivityItem[];
+}
+
+// --- live activity model --------------------------------------------------
+// Accumulated, in-order trace of what the agent emitted during a turn:
+// reasoning ("thinking"), nested-subagent visible text ("subtext"), and tool
+// calls. The top-level reply text streams separately into `liveText` so it can
+// render as a forming agent bubble without duplicating the persisted reply.
+export type ActivityItem = AgentActivityItem;
+
+export interface PhaseActivity {
+  items: ActivityItem[];
+  liveText: string;
+}
+
+export const EMPTY_PHASE_ACTIVITY: PhaseActivity = { items: [], liveText: "" };
+
+function appendText(
+  items: ActivityItem[],
+  kind: "thinking" | "subtext",
+  depth: number,
+  text: string,
+): ActivityItem[] {
+  const last = items[items.length - 1];
+  if (last && last.kind === kind && last.depth === depth) {
+    const copy = items.slice();
+    copy[copy.length - 1] = { ...last, text: last.text + text };
+    return copy;
+  }
+  return [...items, { kind, depth, text }];
+}
+
+export function reduceActivity(prev: PhaseActivity, ev: AgentStreamEvent): PhaseActivity {
+  switch (ev.kind) {
+    case "thinking":
+      return { ...prev, items: appendText(prev.items, "thinking", ev.depth, ev.text) };
+    case "text":
+      // Top-level reply text forms the agent bubble; nested subagent text is
+      // surfaced in the transcript so the user can see delegated work.
+      return ev.depth === 0
+        ? { ...prev, liveText: prev.liveText + ev.text }
+        : { ...prev, items: appendText(prev.items, "subtext", ev.depth, ev.text) };
+    case "tool-start":
+      return {
+        ...prev,
+        items: [
+          ...prev.items,
+          {
+            kind: "tool",
+            depth: ev.depth,
+            name: ev.name,
+            input: ev.input,
+            done: false,
+            toolCallId: ev.toolCallId,
+          },
+        ],
+      };
+    case "tool-end": {
+      const items = prev.items.slice();
+      for (let i = items.length - 1; i >= 0; i--) {
+        const it = items[i];
+        if (
+          it.kind === "tool" &&
+          !it.done &&
+          (it.toolCallId === ev.toolCallId || (!ev.toolCallId && it.name === ev.name))
+        ) {
+          items[i] = { ...it, output: ev.output, done: true };
+          return { ...prev, items };
+        }
+      }
+      return {
+        ...prev,
+        items: [
+          ...items,
+          {
+            kind: "tool",
+            depth: ev.depth,
+            name: ev.name,
+            input: undefined,
+            output: ev.output,
+            done: true,
+            toolCallId: ev.toolCallId,
+          },
+        ],
+      };
+    }
+  }
+}
+
+function truncate(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n) + "…" : s;
+}
+
+function summarizeToolInput(input: unknown): string {
+  if (input == null) return "";
+  if (typeof input === "string") return truncate(input, 80);
+  if (typeof input === "object") {
+    const o = input as Record<string, unknown>;
+    const keys = [
+      "file_path",
+      "path",
+      "pattern",
+      "query",
+      "command",
+      "url",
+      "description",
+      "subagent_type",
+    ];
+    for (const k of keys) {
+      if (typeof o[k] === "string") return truncate(o[k] as string, 80);
+    }
+    try {
+      return truncate(JSON.stringify(o), 80);
+    } catch {
+      return "";
+    }
+  }
+  return truncate(String(input), 80);
 }
 
 interface ChatProps {
@@ -11,10 +131,25 @@ interface ChatProps {
   messages: ChatMessage[];
   onSend: (text: string) => void;
   pending?: boolean;
+  activity?: PhaseActivity;
+  // True only when *this* phase's turn is the one currently running.
+  running?: boolean;
 }
 
-export function Chat({ phase, messages, onSend, pending }: ChatProps): JSX.Element {
+export function Chat({
+  phase,
+  messages,
+  onSend,
+  pending,
+  activity,
+  running,
+}: ChatProps): JSX.Element {
   const [draft, setDraft] = useState("");
+  const logRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
+  }, [messages.length, activity, running]);
 
   function submit(): void {
     if (pending) return;
@@ -24,23 +159,31 @@ export function Chat({ phase, messages, onSend, pending }: ChatProps): JSX.Eleme
     setDraft("");
   }
 
+  const hasActivity =
+    !!activity && (activity.items.length > 0 || activity.liveText.length > 0);
+
   return (
     <div className="chat">
       <div className="chat-header">
         chat <span className="phase">› {phase}</span>
       </div>
-      <div className="chat-log">
-        {messages.length === 0 && (
+      <div className="chat-log" ref={logRef}>
+        {messages.length === 0 && !hasActivity && (
           <div className="chat-empty">
             describe what you want — the agent updates the current artifact
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={i} className={`chat-msg ${m.role}`}>
-            {m.text}
-          </div>
+          <React.Fragment key={i}>
+            {m.activity && m.activity.length > 0 && (
+              <MessageActivity items={m.activity} />
+            )}
+            <div className={`chat-msg ${m.role}`}>{m.text}</div>
+          </React.Fragment>
         ))}
-        {pending && <div className="chat-msg thinking">thinking…</div>}
+        {(hasActivity || running) && (
+          <ActivityPanel activity={activity ?? EMPTY_PHASE_ACTIVITY} running={!!running} />
+        )}
       </div>
       <div className="chat-input-row">
         <textarea
@@ -56,14 +199,78 @@ export function Chat({ phase, messages, onSend, pending }: ChatProps): JSX.Eleme
           rows={2}
           disabled={pending}
         />
-        <button
-          className="btn btn-primary"
-          onClick={submit}
-          disabled={pending}
-        >
+        <button className="btn btn-primary" onClick={submit} disabled={pending}>
           {pending ? "…" : "send ↵"}
         </button>
       </div>
+    </div>
+  );
+}
+
+function ActivityPanel({
+  activity,
+  running,
+}: {
+  activity: PhaseActivity;
+  running: boolean;
+}): JSX.Element {
+  const empty = activity.items.length === 0 && !activity.liveText;
+  return (
+    <div className="chat-activity">
+      <div className="chat-activity-head">
+        ▸ agent activity{running && <span className="ca-running"> · running</span>}
+      </div>
+      {activity.items.map((item, i) => (
+        <ActivityRow key={i} item={item} />
+      ))}
+      {activity.liveText && (
+        <div className="chat-msg agent ca-live">{activity.liveText}</div>
+      )}
+      {running && empty && <div className="ca-waiting">◌ thinking…</div>}
+    </div>
+  );
+}
+
+// Persisted trace under a finished agent reply — collapsed by default.
+function MessageActivity({ items }: { items: ActivityItem[] }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const toolCount = items.filter((it) => it.kind === "tool").length;
+  const summary =
+    `${items.length} step${items.length === 1 ? "" : "s"}` +
+    (toolCount ? ` · ${toolCount} tool call${toolCount === 1 ? "" : "s"}` : "");
+  return (
+    <div className={`chat-activity collapsed${open ? " open" : ""}`}>
+      <button
+        className="chat-activity-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        {open ? "▾" : "▸"} agent activity · {summary}
+      </button>
+      {open && items.map((item, i) => <ActivityRow key={i} item={item} />)}
+    </div>
+  );
+}
+
+function ActivityRow({ item }: { item: ActivityItem }): JSX.Element {
+  const indent = item.depth > 0 ? { marginLeft: item.depth * 12 } : undefined;
+  if (item.kind === "thinking" || item.kind === "subtext") {
+    return (
+      <div className={`ca-item ca-${item.kind}`} style={indent}>
+        {item.text}
+      </div>
+    );
+  }
+  return (
+    <div className="ca-item ca-tool" style={indent}>
+      <div className="ca-tool-head">
+        <span className={`ca-tool-status ${item.done ? "done" : "running"}`} />
+        <span className="ca-tool-name">{item.name}</span>
+        {summarizeToolInput(item.input) && (
+          <span className="ca-tool-input">{summarizeToolInput(item.input)}</span>
+        )}
+      </div>
+      {item.done && item.output && <pre className="ca-tool-output">{item.output}</pre>}
     </div>
   );
 }
