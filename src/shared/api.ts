@@ -26,6 +26,15 @@ export interface AgentTurn {
   text: string;
 }
 
+export interface SessionState {
+  projectPath?: string;
+  activeSpecId?: string;
+  phase?: Phase;
+}
+
+// Per-phase conversation; structurally identical to ChatMessage in Chat.tsx.
+export type ChatHistory = Record<Phase, AgentTurn[]>;
+
 export interface AgentTurnRequest {
   specPath: string;
   phase: Phase;
@@ -283,6 +292,11 @@ export interface SpecOpsApi {
   openProject(): Promise<ProjectInfo | null>;
   listSpecs(projectPath: string): Promise<SpecInfo[]>;
   createSpec(projectPath: string, name: string): Promise<SpecInfo>;
+  loadProject(projectPath: string): Promise<ProjectInfo | null>;
+  getSession(): Promise<SessionState>;
+  saveSession(session: SessionState): Promise<SessionState>;
+  readChat(specPath: string): Promise<ChatHistory>;
+  writeChat(specPath: string, history: ChatHistory): Promise<void>;
   readArtifacts(specPath: string): Promise<ArtifactFiles>;
   writeArtifact(
     specPath: string,

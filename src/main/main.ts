@@ -4,9 +4,11 @@ import type {
   AgentTurnRequest,
   AppSettings,
   ArtifactFiles,
+  ChatHistory,
   GenerateIntegrationTestsRequest,
   GenerateUnitTestsRequest,
   ReviewTaskRequest,
+  SessionState,
   TaskStatus,
   TestLoopRequest,
   WorkerChatRequest,
@@ -18,11 +20,14 @@ import {
   checkMergeReadiness,
   createSpec,
   listSpecs,
+  loadProject,
   mergeSpecToMain,
   openProject,
   readArtifacts,
   writeArtifact,
 } from "./project";
+import { loadSession, saveSession } from "./session";
+import { readChat, writeChat } from "./chat";
 import { loadSettings, saveSettings } from "./settings";
 import {
   decomposeStory,
@@ -83,8 +88,23 @@ function registerIpc(): void {
     return openProject(result.filePaths[0]);
   });
 
+  ipcMain.handle("project:load", (_e, projectPath: string) =>
+    loadProject(projectPath),
+  );
+
   ipcMain.handle("project:list-specs", (_e, projectPath: string) =>
     listSpecs(projectPath),
+  );
+
+  ipcMain.handle("session:get", () => loadSession());
+  ipcMain.handle("session:save", (_e, session: SessionState) =>
+    saveSession(session),
+  );
+
+  ipcMain.handle("chat:read", (_e, specPath: string) => readChat(specPath));
+  ipcMain.handle(
+    "chat:write",
+    (_e, specPath: string, history: ChatHistory) => writeChat(specPath, history),
   );
 
   ipcMain.handle(

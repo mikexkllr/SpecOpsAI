@@ -4,7 +4,13 @@ import type { ArtifactFiles, SpecOpsApi, TestLoopState } from "../shared/api";
 const api: SpecOpsApi = {
   version: "0.1.0",
   openProject: () => ipcRenderer.invoke("project:open"),
+  loadProject: (projectPath) => ipcRenderer.invoke("project:load", projectPath),
   listSpecs: (projectPath) => ipcRenderer.invoke("project:list-specs", projectPath),
+  getSession: () => ipcRenderer.invoke("session:get"),
+  saveSession: (session) => ipcRenderer.invoke("session:save", session),
+  readChat: (specPath) => ipcRenderer.invoke("chat:read", specPath),
+  writeChat: (specPath, history) =>
+    ipcRenderer.invoke("chat:write", specPath, history),
   createSpec: (projectPath, name) =>
     ipcRenderer.invoke("project:create-spec", projectPath, name),
   readArtifacts: (specPath) => ipcRenderer.invoke("spec:read", specPath),

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from "react";
-import type { AgentTurn, ArtifactFiles, ProjectInfo, SpecInfo } from "../shared/api";
+import type { AgentTurn, ArtifactFiles, ChatHistory, ProjectInfo, SpecInfo } from "../shared/api";
 import { Chat, type ChatMessage } from "./Chat";
 import { ImplementationView } from "./ImplementationView";
 import { PhaseNav } from "./PhaseNav";
@@ -27,29 +27,70 @@ const RENDERER_ARTIFACT_KEYS: Record<keyof ArtifactFiles, keyof Artifacts> = {
   code: "code",
 };
 
+const EMPTY_MESSAGES: Record<Phase, ChatMessage[]> = {
+  spec: [],
+  "user-story": [],
+  "technical-story": [],
+  implementation: [],
+};
+
 export function App(): JSX.Element {
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [activeSpec, setActiveSpec] = useState<SpecInfo | null>(null);
   const [phase, setPhase] = useState<Phase>("spec");
   const [artifacts, setArtifacts] = useState<Artifacts>(EMPTY_ARTIFACTS);
-  const [messagesByPhase, setMessagesByPhase] = useState<Record<Phase, ChatMessage[]>>({
-    spec: [],
-    "user-story": [],
-    "technical-story": [],
-    implementation: [],
-  });
+  const [messagesByPhase, setMessagesByPhase] =
+    useState<Record<Phase, ChatMessage[]>>(EMPTY_MESSAGES);
   const [pending, setPending] = useState(false);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const saveTimers = useRef<Partial<Record<keyof Artifacts, number>>>({});
+  // True until the saved session has been restored, so the session-persist
+  // effect below doesn't overwrite it with the initial empty state on launch.
+  const restoring = useRef(true);
 
   useEffect(() => {
     window.specops.getSettings().then(setSettings);
   }, []);
 
+  // Restore the last project / spec / phase on launch.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const session = await window.specops.getSession();
+        if (cancelled || !session.projectPath) return;
+        const p = await window.specops.loadProject(session.projectPath);
+        if (cancelled || !p) return;
+        setProject(p);
+        const spec = session.activeSpecId
+          ? p.specs.find((s) => s.id === session.activeSpecId) ?? null
+          : null;
+        setActiveSpec(spec);
+        if (spec && session.phase) setPhase(session.phase);
+      } finally {
+        if (!cancelled) restoring.current = false;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Persist the session whenever the project / spec / phase changes.
+  useEffect(() => {
+    if (restoring.current) return;
+    void window.specops.saveSession({
+      projectPath: project?.path,
+      activeSpecId: activeSpec?.id,
+      phase,
+    });
+  }, [project, activeSpec, phase]);
+
   useEffect(() => {
     if (!activeSpec) {
       setArtifacts(EMPTY_ARTIFACTS);
+      setMessagesByPhase(EMPTY_MESSAGES);
       return;
     }
     let cancelled = false;
@@ -61,6 +102,10 @@ export function App(): JSX.Element {
         technicalStories: files.technicalStories,
         code: files.code,
       });
+    });
+    window.specops.readChat(activeSpec.path).then((history) => {
+      if (cancelled) return;
+      setMessagesByPhase(history);
     });
     return () => {
       cancelled = true;
@@ -107,18 +152,20 @@ export function App(): JSX.Element {
 
   async function sendMessage(text: string): Promise<void> {
     if (pending || !activeSpec) return;
-    const history: AgentTurn[] = messagesByPhase[phase].map((m) => ({
+    const specPath = activeSpec.path;
+    const base = messagesByPhase;
+    const history: AgentTurn[] = base[phase].map((m) => ({
       role: m.role,
       text: m.text,
     }));
-    setMessagesByPhase((prev) => ({
-      ...prev,
-      [phase]: [...prev[phase], { role: "user", text }],
-    }));
+    const withUser = [...base[phase], { role: "user" as const, text }];
+    const afterUser = { ...base, [phase]: withUser };
+    setMessagesByPhase(afterUser);
+    void window.specops.writeChat(specPath, afterUser);
     setPending(true);
     try {
       const result = await window.specops.agentChat({
-        specPath: activeSpec.path,
+        specPath,
         phase,
         artifacts,
         history,
@@ -130,18 +177,22 @@ export function App(): JSX.Element {
           flush: true,
         });
       }
-      setMessagesByPhase((prev) => ({
-        ...prev,
-        [phase]: [...prev[phase], { role: "agent", text: result.reply }],
-      }));
+      const afterAgent = {
+        ...afterUser,
+        [phase]: [...withUser, { role: "agent" as const, text: result.reply }],
+      };
+      setMessagesByPhase(afterAgent);
+      void window.specops.writeChat(specPath, afterAgent);
     } catch (err) {
-      setMessagesByPhase((prev) => ({
-        ...prev,
+      const afterError = {
+        ...afterUser,
         [phase]: [
-          ...prev[phase],
-          { role: "agent", text: `Agent error: ${(err as Error).message}` },
+          ...withUser,
+          { role: "agent" as const, text: `Agent error: ${(err as Error).message}` },
         ],
-      }));
+      };
+      setMessagesByPhase(afterError);
+      void window.specops.writeChat(specPath, afterError);
     } finally {
       setPending(false);
     }
@@ -220,6 +271,7 @@ export function App(): JSX.Element {
                 flex: 1,
                 display: "grid",
                 gridTemplateColumns: "1fr 380px",
+                gridTemplateRows: "minmax(0, 1fr)",
                 minHeight: 0,
               }}
             >

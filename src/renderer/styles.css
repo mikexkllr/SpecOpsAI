@@ -118,6 +118,7 @@ input::placeholder, textarea::placeholder {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  overflow: hidden;
   background: var(--bg-0);
   color: var(--fg-0);
 }

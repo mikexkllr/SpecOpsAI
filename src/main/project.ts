@@ -113,6 +113,13 @@ export async function openProject(projectPath: string): Promise<ProjectInfo> {
   };
 }
 
+export async function loadProject(
+  projectPath: string,
+): Promise<ProjectInfo | null> {
+  if (!(await pathExists(projectPath))) return null;
+  return openProject(projectPath);
+}
+
 export async function createSpec(
   projectPath: string,
   name: string,
