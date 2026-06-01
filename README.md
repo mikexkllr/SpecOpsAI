@@ -21,6 +21,18 @@ harness, against any of four configurable model providers
 
 ---
 
+## Screenshots
+
+<p align="center">
+  <img src="assets/screenshot-empty-state.png" alt="Empty state — open project to begin" width="780"/>
+</p>
+
+<p align="center">
+  <img src="assets/screenshot-spec-phase.png" alt="Spec phase — markdown editor with AI chat" width="780"/>
+</p>
+
+---
+
 ## Table of Contents
 
 1. [Interface design](#interface-design)
