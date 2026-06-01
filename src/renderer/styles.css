@@ -606,7 +606,69 @@ input::placeholder, textarea::placeholder {
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+  text-align: left;
   color: var(--fg-1);
+  font: inherit;
+  font-size: var(--fs-xs);
+}
+
+.ca-tool .ca-tool-head:disabled { cursor: default; }
+
+.ca-tool-caret {
+  color: var(--fg-3);
+  width: 8px;
+  flex: 0 0 auto;
+}
+
+/* write_todos rendered as a checklist instead of raw JSON */
+.ca-todos {
+  list-style: none;
+  margin: 4px 0 2px;
+  padding: 0 0 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ca-todo {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  font-size: var(--fs-xs);
+  color: var(--fg-1);
+}
+
+.ca-todo-glyph { color: var(--fg-3); flex: 0 0 auto; }
+.ca-todo.status-in-progress { color: var(--fg-0); }
+.ca-todo.status-in-progress .ca-todo-glyph { color: var(--accent); }
+.ca-todo.status-completed .ca-todo-glyph,
+.ca-todo.status-done .ca-todo-glyph { color: var(--ok); }
+.ca-todo.status-completed .ca-todo-text,
+.ca-todo.status-done .ca-todo-text {
+  color: var(--fg-3);
+  text-decoration: line-through;
+}
+
+/* expanded exact input/output for a tool call */
+.ca-tool-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-left: 14px;
+}
+
+.ca-code-label {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-3);
+  margin-bottom: 2px;
 }
 
 .ca-tool-status {

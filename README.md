@@ -190,7 +190,10 @@ instead of `invoke`, translating the raw stream into a small
 subagent work is surfaced too). Events are pushed over the `agent:event` IPC
 channel (broadcast in [main.ts](src/main/main.ts), subscribed via
 `onAgentEvent` in [preload.ts](src/preload/preload.ts)) and rendered as a live
-"agent activity" panel in [Chat.tsx](src/renderer/Chat.tsx). Each turn carries
+"agent activity" panel in [Chat.tsx](src/renderer/Chat.tsx). Tool calls render
+with a schema-aware one-line summary (`read_file <path>`, `grep "<pattern>"`,
+…) that expands to the exact input/output; `write_todos` is shown as a status
+checklist rather than raw JSON. Each turn carries
 a renderer-generated `turnId` so events route to the right phase; the final
 `reply` is derived from the last `values` state snapshot exactly as `invoke`
 would have returned it.

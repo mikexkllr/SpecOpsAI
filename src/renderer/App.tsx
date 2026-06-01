@@ -54,15 +54,33 @@ const EMPTY_ACTIVITY: Record<Phase, PhaseActivity> = {
   implementation: EMPTY_PHASE_ACTIVITY,
 };
 
-// Keep persisted tool outputs bounded so chats.json doesn't balloon with large
-// file reads — the live view already showed the fuller text.
-const PERSIST_TOOL_OUTPUT_CAP = 1500;
+// Keep persisted tool input/output bounded so chats.json doesn't balloon with
+// large file reads or writes — the live view already showed the fuller text.
+const PERSIST_OUTPUT_CAP = 1500;
+const PERSIST_INPUT_STR_CAP = 2000;
+function trimStrings(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.length > PERSIST_INPUT_STR_CAP
+      ? value.slice(0, PERSIST_INPUT_STR_CAP) + "…"
+      : value;
+  }
+  if (Array.isArray(value)) return value.map(trimStrings);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, trimStrings(v)]),
+    );
+  }
+  return value;
+}
 function trimForPersist(items: AgentActivityItem[]): AgentActivityItem[] {
-  return items.map((it) =>
-    it.kind === "tool" && it.output && it.output.length > PERSIST_TOOL_OUTPUT_CAP
-      ? { ...it, output: it.output.slice(0, PERSIST_TOOL_OUTPUT_CAP) + "…" }
-      : it,
-  );
+  return items.map((it) => {
+    if (it.kind !== "tool") return it;
+    const output =
+      it.output && it.output.length > PERSIST_OUTPUT_CAP
+        ? it.output.slice(0, PERSIST_OUTPUT_CAP) + "…"
+        : it.output;
+    return { ...it, input: trimStrings(it.input), output };
+  });
 }
 
 export function App(): JSX.Element {

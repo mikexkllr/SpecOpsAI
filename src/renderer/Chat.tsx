@@ -126,6 +126,81 @@ function summarizeToolInput(input: unknown): string {
   return truncate(String(input), 80);
 }
 
+// --- tool-call rendering helpers ------------------------------------------
+type ToolItem = Extract<ActivityItem, { kind: "tool" }>;
+
+function asObj(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+}
+function asStr(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+function prettyJson(v: unknown): string {
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+}
+
+interface TodoEntry {
+  text: string;
+  status: string;
+}
+
+// deepagents' write_todos passes `{ todos: [{ content, status }] }`; the worker
+// decomposition's emit_tasks passes `{ tasks: [{ title, description }] }`. Both
+// read better as a checklist than as raw JSON.
+function extractTodos(input: unknown): TodoEntry[] | null {
+  const arr = asObj(input).todos ?? asObj(input).tasks;
+  if (!Array.isArray(arr)) return null;
+  const out: TodoEntry[] = [];
+  for (const raw of arr) {
+    const t = asObj(raw);
+    const text =
+      asStr(t.content) ?? asStr(t.title) ?? asStr(t.activeForm) ?? asStr(t.description);
+    if (text) out.push({ text, status: asStr(t.status) ?? "pending" });
+  }
+  return out.length ? out : null;
+}
+
+function todoGlyph(status: string): string {
+  const s = status.toLowerCase();
+  if (s.includes("progress")) return "◐";
+  if (s === "done" || s === "completed") return "✓";
+  return "○";
+}
+
+// A clean, schema-aware one-liner for the collapsed tool row.
+function toolSummary(name: string, input: unknown): string {
+  const o = asObj(input);
+  switch (name) {
+    case "read_file":
+    case "write_file":
+    case "edit_file":
+      return asStr(o.file_path) ?? asStr(o.path) ?? "";
+    case "ls":
+      return asStr(o.path) ?? "/";
+    case "glob":
+      return asStr(o.pattern) ?? "";
+    case "grep":
+      return [
+        asStr(o.pattern) ? `"${asStr(o.pattern)}"` : "",
+        asStr(o.path) ? `in ${asStr(o.path)}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+    case "task":
+      return [asStr(o.subagent_type), asStr(o.description)].filter(Boolean).join(" · ");
+    case "write_todos": {
+      const t = extractTodos(input);
+      return t ? `${t.length} item${t.length === 1 ? "" : "s"}` : "";
+    }
+    default:
+      return summarizeToolInput(input);
+  }
+}
+
 interface ChatProps {
   phase: Phase;
   messages: ChatMessage[];
@@ -261,16 +336,68 @@ function ActivityRow({ item }: { item: ActivityItem }): JSX.Element {
       </div>
     );
   }
+  return <ToolRow item={item} indent={indent} />;
+}
+
+function ToolRow({
+  item,
+  indent,
+}: {
+  item: ToolItem;
+  indent?: React.CSSProperties;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const todos = item.name === "write_todos" ? extractTodos(item.input) : null;
+  const summary = toolSummary(item.name, item.input);
+  // Collapsing reveals the exact input/output — useful as a copy-paste example.
+  const hasDetail = item.input !== undefined || !!item.output;
   return (
     <div className="ca-item ca-tool" style={indent}>
-      <div className="ca-tool-head">
+      <button
+        className="ca-tool-head"
+        onClick={() => hasDetail && setOpen((v) => !v)}
+        aria-expanded={open}
+        disabled={!hasDetail}
+      >
         <span className={`ca-tool-status ${item.done ? "done" : "running"}`} />
+        {hasDetail && <span className="ca-tool-caret">{open ? "▾" : "▸"}</span>}
         <span className="ca-tool-name">{item.name}</span>
-        {summarizeToolInput(item.input) && (
-          <span className="ca-tool-input">{summarizeToolInput(item.input)}</span>
-        )}
-      </div>
-      {item.done && item.output && <pre className="ca-tool-output">{item.output}</pre>}
+        {summary && <span className="ca-tool-input">{summary}</span>}
+      </button>
+      {todos && <TodoList todos={todos} />}
+      {open && (
+        <div className="ca-tool-detail">
+          {item.input !== undefined && (
+            <LabeledCode label="input" text={prettyJson(item.input)} />
+          )}
+          {item.output && <LabeledCode label="output" text={item.output} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TodoList({ todos }: { todos: TodoEntry[] }): JSX.Element {
+  return (
+    <ul className="ca-todos">
+      {todos.map((t, i) => (
+        <li
+          key={i}
+          className={`ca-todo status-${t.status.toLowerCase().replace(/[^a-z]+/g, "-")}`}
+        >
+          <span className="ca-todo-glyph">{todoGlyph(t.status)}</span>
+          <span className="ca-todo-text">{t.text}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function LabeledCode({ label, text }: { label: string; text: string }): JSX.Element {
+  return (
+    <div className="ca-code">
+      <div className="ca-code-label">{label}</div>
+      <pre className="ca-tool-output">{text}</pre>
     </div>
   );
 }
