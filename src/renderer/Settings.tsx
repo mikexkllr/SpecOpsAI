@@ -121,6 +121,10 @@ export function Settings({ onClose, onSaved }: Props): JSX.Element {
               codingAgent={settings.codingAgent}
               onChange={(codingAgent) => setSettings({ ...settings, codingAgent })}
             />
+            <ReviewerSection
+              devServerUrl={settings.devServerUrl ?? ""}
+              onChange={(devServerUrl) => setSettings({ ...settings, devServerUrl: devServerUrl || undefined })}
+            />
           </div>
         </div>
 
@@ -253,9 +257,14 @@ function CodingAgentSection({
       description: "runs `gh copilot suggest` CLI — requires GitHub Copilot subscription",
     },
     {
-      id: "deepagent",
-      label: "deepagent (built-in)",
-      description: "built-in agent with filesystem tools and plan/explore subagents",
+      id: "codex",
+      label: "codex (openai)",
+      description: "runs `codex --quiet` CLI for each task — requires OpenAI Codex CLI installed globally",
+    },
+    {
+      id: "antigravity",
+      label: "antigravity (google)",
+      description: "runs `antigravity --print` CLI for each task — Google's next-gen coding agent",
     },
   ];
   return (
@@ -278,6 +287,32 @@ function CodingAgentSection({
             </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function ReviewerSection({
+  devServerUrl,
+  onChange,
+}: {
+  devServerUrl: string;
+  onChange: (url: string) => void;
+}): JSX.Element {
+  return (
+    <div className="divider-t" style={{ paddingTop: 18 }}>
+      <div className="section-title">reviewer</div>
+      <div className="section-subtitle">
+        optional dev server URL — the reviewer deepagent uses browser tools to verify features when it makes sense
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <Field label="dev server url">
+          <input
+            value={devServerUrl}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="e.g. http://localhost:3000"
+          />
+        </Field>
       </div>
     </div>
   );

@@ -45,7 +45,7 @@ export interface TechnicalStory {
   body: string;
 }
 
-export type CodingAgentId = "deepagent" | "claude-code" | "gh-copilot";
+export type CodingAgentId = "claude-code" | "gh-copilot" | "codex" | "antigravity";
 
 export type TaskStatus = "pending" | "in-progress" | "needs-attention" | "done";
 
@@ -57,8 +57,23 @@ export interface TaskChunk {
 }
 
 export interface WorkerMessage {
-  role: "user" | "agent" | "terminal";
+  role: "user" | "agent" | "terminal" | "reviewer";
   text: string;
+}
+
+export type ReviewVerdict = "approved" | "changes-requested";
+
+export interface ReviewTaskRequest {
+  specPath: string;
+  story: TechnicalStory;
+  task: TaskChunk;
+  artifacts: ArtifactFiles;
+}
+
+export interface ReviewTaskResult {
+  verdict: ReviewVerdict;
+  summary: string;
+  error?: string;
 }
 
 export type WorkerStatus = "idle" | "decomposing" | "running" | "done";
@@ -212,6 +227,7 @@ export interface AppSettings {
   providers: Record<ProviderId, ProviderConfig>;
   agentMode: AgentMode;
   codingAgent: CodingAgentId;
+  devServerUrl?: string;
 }
 
 export interface ProviderDescriptor {
@@ -292,6 +308,7 @@ export interface SpecOpsApi {
   ): Promise<WorkerState>;
   resetWorker(specPath: string, storyId: string): Promise<WorkerStore>;
   stopWorker(specPath: string, storyId: string): Promise<void>;
+  reviewTask(request: ReviewTaskRequest): Promise<ReviewTaskResult>;
   startTestLoop(request: TestLoopRequest): Promise<void>;
   stopTestLoop(): Promise<void>;
   getTestLoopState(): Promise<TestLoopState>;

@@ -7,6 +7,48 @@ import type {
   WorkerState,
 } from "../../shared/api";
 
+function ReviewerMessage({ text }: { text: string }): JSX.Element {
+  const match = text.match(/^\[(approved|changes-requested)\]\s*/);
+  const verdict = match ? (match[1] as "approved" | "changes-requested") : null;
+  const summary = match ? text.slice(match[0].length) : text;
+  return (
+    <div
+      className="chat-msg reviewer"
+      style={{
+        borderLeft: `3px solid ${verdict === "approved" ? "var(--success, #4caf50)" : verdict === "changes-requested" ? "var(--danger, #f44336)" : "var(--accent)"}`,
+        paddingLeft: 10,
+        background: "var(--surface-2, rgba(255,255,255,0.03))",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 4,
+          fontSize: "var(--fs-xs)",
+          color: "var(--fg-2)",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+        }}
+      >
+        <span>reviewer</span>
+        {verdict && (
+          <span
+            style={{
+              color: verdict === "approved" ? "var(--success, #4caf50)" : "var(--danger, #f44336)",
+              fontWeight: 600,
+            }}
+          >
+            {verdict === "approved" ? "✓ approved" : "⚠ changes requested"}
+          </span>
+        )}
+      </div>
+      <div style={{ whiteSpace: "pre-wrap" }}>{summary}</div>
+    </div>
+  );
+}
+
 const STATUS_LABEL: Record<TaskStatus, string> = {
   pending: "pending",
   "in-progress": "running",
@@ -217,6 +259,8 @@ export function StoryWorkspace({
             {state.messages.map((m, i) =>
               m.role === "terminal" ? (
                 <pre key={i} className="terminal-msg">{m.text}</pre>
+              ) : m.role === "reviewer" ? (
+                <ReviewerMessage key={i} text={m.text} />
               ) : (
                 <div key={i} className={`chat-msg ${m.role}`}>
                   {m.text}
@@ -229,7 +273,7 @@ export function StoryWorkspace({
             {(busy === "chat" || busy === "run" || busy === "tests") && !cliBuffer && (
               <div className="chat-msg thinking">
                 {busy === "run"
-                  ? "Worker working…"
+                  ? "reviewing…"
                   : busy === "tests"
                     ? "generating unit tests…"
                     : "thinking…"}

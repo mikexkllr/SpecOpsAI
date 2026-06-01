@@ -6,6 +6,7 @@ import type {
   ArtifactFiles,
   GenerateIntegrationTestsRequest,
   GenerateUnitTestsRequest,
+  ReviewTaskRequest,
   TaskStatus,
   TestLoopRequest,
   WorkerChatRequest,
@@ -41,6 +42,7 @@ import {
   stopTestLoop,
 } from "./test-loop";
 import { onCliChunk } from "./cliAgent";
+import { runReviewerAgent } from "./reviewer";
 
 const isDev = !app.isPackaged;
 
@@ -135,6 +137,17 @@ function registerIpc(): void {
     (_e, request: GenerateIntegrationTestsRequest) =>
       generateIntegrationTests(request),
   );
+
+  ipcMain.handle("worker:review-task", async (_e, request: ReviewTaskRequest) => {
+    const settings = await loadSettings();
+    return runReviewerAgent({
+      specPath: request.specPath,
+      story: request.story,
+      task: request.task,
+      artifacts: request.artifacts,
+      devServerUrl: settings.devServerUrl,
+    });
+  });
 
   ipcMain.handle("testloop:start", (_e, request: TestLoopRequest) =>
     startTestLoop(request),

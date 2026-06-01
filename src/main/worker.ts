@@ -29,6 +29,7 @@ import {
 } from "./workerSubagents";
 import { loadDeps } from "./deepagentsDeps";
 import { runCliAgent, buildCliTaskPrompt } from "./cliAgent";
+import { runReviewerAgent } from "./reviewer";
 import { projectRoot, lastAssistantText, isAbortError } from "./utils";
 
 const STORE_FILE = path.join(".specops", "workers.json");
@@ -405,50 +406,50 @@ export async function runWorkerTask(
   const ac = makeAbortController(req.specPath, req.story.id);
   try {
     const settings = await loadSettings();
-    const usingCli = settings.codingAgent !== "deepagent";
 
-    let reply: string;
-    if (usingCli) {
-      reply = await runCliAgent({
-        agentId: settings.codingAgent,
-        cwd: projectRoot(req.specPath),
-        storyId: req.story.id,
-        prompt: buildCliTaskPrompt(task, req.story, req.artifacts),
-        yolo: settings.agentMode === "yolo",
-        signal: ac.signal,
-      });
-    } else {
-      const system = chatSystemPrompt(req.story, inProgressTasks, req.artifacts);
-      const history: ChatMsg[] = prev.messages.map((m) => ({
-        role: m.role === "user" ? "user" : "assistant",
-        content: m.text,
-      }));
-      reply = await runStoryWorker(
-        req.specPath,
-        system,
-        history,
-        userTurnText,
-        ac.signal,
-      );
-    }
+    const cliReply = await runCliAgent({
+      agentId: settings.codingAgent,
+      cwd: projectRoot(req.specPath),
+      storyId: req.story.id,
+      prompt: buildCliTaskPrompt(task, req.story, req.artifacts),
+      yolo: settings.agentMode === "yolo",
+      signal: ac.signal,
+    });
 
-    // YOLO → auto-complete to "done"; HITL + CLI → "needs-attention" for review
-    const nextTaskStatus: TaskStatus = req.autoComplete
+    const terminalMessage: WorkerMessage = { role: "terminal", text: cliReply };
+    const afterCli: WorkerState = {
+      ...working,
+      messages: [...working.messages, terminalMessage],
+    };
+    store[req.story.id] = afterCli;
+    await saveStore(req.specPath, store);
+
+    // Run reviewer deepagent on the CLI agent's changes
+    const reviewResult = await runReviewerAgent({
+      specPath: req.specPath,
+      story: req.story,
+      task,
+      artifacts: req.artifacts,
+      devServerUrl: settings.devServerUrl,
+      signal: ac.signal,
+    });
+
+    const reviewerText = `[${reviewResult.verdict}] ${reviewResult.summary}`;
+    const reviewerMessage: WorkerMessage = { role: "reviewer", text: reviewerText };
+
+    // YOLO + approved → auto-complete; YOLO + changes-requested → needs-attention;
+    // HITL → always needs-attention so the human can read the review and decide.
+    const nextTaskStatus: TaskStatus = req.autoComplete && reviewResult.verdict === "approved"
       ? "done"
-      : usingCli
-        ? "needs-attention"
-        : task.status;
+      : "needs-attention";
 
     const finalTasks = inProgressTasks.map((t) =>
       t.id === task.id ? { ...t, status: nextTaskStatus } : t,
     );
-    const replyMessage: WorkerMessage = usingCli
-      ? { role: "terminal", text: reply }
-      : { role: "agent", text: reply };
     const next: WorkerState = {
-      ...working,
+      ...afterCli,
       tasks: finalTasks,
-      messages: [...working.messages, replyMessage],
+      messages: [...afterCli.messages, reviewerMessage],
       status: allDone(finalTasks) ? "done" : "idle",
     };
     store[req.story.id] = next;

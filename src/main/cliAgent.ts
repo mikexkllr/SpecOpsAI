@@ -49,6 +49,17 @@ export async function runCliAgent(opts: CliAgentOptions): Promise<string> {
       args = ["copilot", "suggest", "-t", "shell", prompt];
       stdinPrompt = null;
       break;
+    case "codex":
+      cmd = "codex";
+      args = yolo ? ["--quiet", "--no-confirm"] : ["--quiet"];
+      stdinPrompt = prompt;
+      break;
+    case "antigravity":
+      // Google Antigravity CLI — prompt via stdin
+      cmd = "antigravity";
+      args = ["--print"];
+      stdinPrompt = prompt;
+      break;
     default:
       throw new Error(`Unknown CLI agent: ${agentId}`);
   }

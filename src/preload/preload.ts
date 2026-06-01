@@ -21,6 +21,7 @@ const api: SpecOpsApi = {
     ipcRenderer.invoke("worker:reset", specPath, storyId),
   stopWorker: (specPath, storyId) =>
     ipcRenderer.invoke("worker:stop", specPath, storyId),
+  reviewTask: (request) => ipcRenderer.invoke("worker:review-task", request),
   generateUnitTests: (request) =>
     ipcRenderer.invoke("worker:generate-unit-tests", request),
   generateIntegrationTests: (request) =>
