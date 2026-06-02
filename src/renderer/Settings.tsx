@@ -243,6 +243,21 @@ function ProviderForm({
 
       {d.needsAwsCreds && (
         <>
+          <Field label="endpoint url">
+            <input
+              value={cfg.baseUrl ?? ""}
+              onChange={(e) => onChange({ baseUrl: e.target.value })}
+              placeholder="e.g. https://bedrock.proxy.company.com — blank = default AWS"
+            />
+          </Field>
+          <Field label="api key (bearer token)">
+            <input
+              type="password"
+              value={cfg.apiKey ?? ""}
+              onChange={(e) => onChange({ apiKey: e.target.value })}
+              placeholder="your Bedrock API key / gateway token"
+            />
+          </Field>
           <Field label="aws region">
             <input
               value={cfg.region ?? ""}
@@ -250,26 +265,23 @@ function ProviderForm({
               placeholder="e.g. us-east-1"
             />
           </Field>
-          <Field label="endpoint host (optional)">
-            <input
-              value={cfg.baseUrl ?? ""}
-              onChange={(e) => onChange({ baseUrl: e.target.value })}
-              placeholder="proxy/VPC host — default bedrock-runtime.<region>.amazonaws.com"
-            />
-          </Field>
-          <Field label="aws access key id">
+          <div className="section-subtitle" style={{ marginTop: 2 }}>
+            No API key? Use AWS access keys instead (leave the API key blank), or leave both
+            blank to use the machine's default AWS credential chain.
+          </div>
+          <Field label="aws access key id (optional)">
             <input
               value={cfg.accessKeyId ?? ""}
               onChange={(e) => onChange({ accessKeyId: e.target.value })}
-              placeholder="blank → use default AWS credential chain"
+              placeholder="AKIA… — only for SigV4 auth"
             />
           </Field>
-          <Field label="aws secret access key">
+          <Field label="aws secret access key (optional)">
             <input
               type="password"
               value={cfg.secretAccessKey ?? ""}
               onChange={(e) => onChange({ secretAccessKey: e.target.value })}
-              placeholder="stored on this device"
+              placeholder="only for SigV4 auth"
             />
           </Field>
         </>

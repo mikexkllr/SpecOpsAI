@@ -359,7 +359,7 @@ export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
       "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
     ],
     description:
-      "Claude (and other) models via the AWS Bedrock Converse API. Authenticates with AWS credentials + region instead of an Anthropic key.",
+      "Claude (and other) models via the AWS Bedrock Converse API. Authenticate with a Bedrock API key (bearer token) + endpoint + region — like a company proxy/gateway — or with AWS access keys.",
     thinking: "budget",
     defaultThinkingBudget: 2048,
   },

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import type { BedrockRuntimeClientConfig } from "@aws-sdk/client-bedrock-runtime";
 import type { ProviderConfig } from "../shared/api";
 
 type AnthropicMod = typeof import("@langchain/anthropic");
@@ -9,6 +10,7 @@ type OpenAIMod = typeof import("@langchain/openai");
 type GoogleMod = typeof import("@langchain/google-genai");
 type OllamaMod = typeof import("@langchain/ollama");
 type BedrockMod = typeof import("@langchain/aws");
+type BedrockSdkMod = typeof import("@aws-sdk/client-bedrock-runtime");
 
 function esm<T>(spec: string): Promise<T> {
   return Function(`return import("${spec}")`)() as Promise<T>;
@@ -104,31 +106,9 @@ export async function buildChatModel(cfg: ProviderConfig): Promise<BaseChatModel
     }
     case "bedrock": {
       const { ChatBedrockConverse } = await esm<BedrockMod>("@langchain/aws");
+      const { BedrockRuntimeClient } = await esm<BedrockSdkMod>("@aws-sdk/client-bedrock-runtime");
       const budget = t?.budgetTokens ?? 2048;
-      // Explicit access key + secret override the default AWS credential chain;
-      // omit both to fall back to env vars / ~/.aws / instance role. Trim to
-      // tolerate trailing whitespace/newlines from copy-paste.
-      const accessKeyId = cfg.accessKeyId?.trim();
-      const secretAccessKey = cfg.secretAccessKey?.trim();
-      const haveKeys = Boolean(accessKeyId && secretAccessKey);
-      const ambient = hasAmbientAwsCredentials();
-      // Secret-safe diagnostics: confirms which credential path is taken and what
-      // actually reached buildChatModel. Logs to the Electron main-process stdout.
-      console.log(
-        `[bedrock] resolving credentials: explicitKeys=${haveKeys} ` +
-          `accessKeyId=${maskKey(accessKeyId)} secretLen=${secretAccessKey?.length ?? 0} ` +
-          `ambientChainAvailable=${ambient}`,
-      );
-      if (!haveKeys && !ambient) {
-        console.error(
-          "[bedrock] no explicit keys and no ambient AWS credentials detected — aborting before SDK call.",
-        );
-        throw new Error(
-          "No AWS credentials found for Bedrock. Enter an access key ID + secret in Settings, " +
-            "or set up the AWS default credential chain (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, " +
-            "AWS_PROFILE, or ~/.aws/credentials).",
-        );
-      }
+
       const regionSource = cfg.region
         ? "settings"
         : process.env.AWS_DEFAULT_REGION
@@ -141,25 +121,59 @@ export async function buildChatModel(cfg: ProviderConfig): Promise<BaseChatModel
         console.error("[bedrock] no region in settings or AWS_DEFAULT_REGION/AWS_REGION env.");
         throw new Error("AWS region is not set for Bedrock. Set it in Settings (e.g. us-east-1).");
       }
-      // Custom endpoint host for company proxies / VPC (PrivateLink) endpoints.
-      // The SDK prepends https://, so strip any scheme or trailing slash the user pasted.
-      const endpointHost = cfg.baseUrl?.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+
+      // Endpoint accepts a full URL or a bare host (a company proxy / gateway / VPC
+      // endpoint). Default a missing scheme to https. Blank → standard AWS endpoint.
+      let endpoint = cfg.baseUrl?.trim();
+      if (endpoint && !/^https?:\/\//i.test(endpoint)) endpoint = `https://${endpoint}`;
+
+      // Three auth modes, in priority order:
+      //   1) Bearer-token API key (Bedrock API key / gateway token) — a single key,
+      //      sent as `Authorization: Bearer …`. This is what most company proxies use.
+      //   2) Static SigV4 access key + secret.
+      //   3) Ambient AWS default chain (env / profile / ~/.aws / role).
+      const bearer = cfg.apiKey?.trim();
+      const accessKeyId = cfg.accessKeyId?.trim();
+      const secretAccessKey = cfg.secretAccessKey?.trim();
+      const ambient = hasAmbientAwsCredentials();
+
+      const clientCfg: BedrockRuntimeClientConfig = { region };
+      if (endpoint) clientCfg.endpoint = endpoint;
+
+      let authMode: string;
+      if (bearer) {
+        clientCfg.token = { token: bearer };
+        // Force bearer over SigV4 (which is listed first by default and would
+        // otherwise demand AWS credentials we don't have). The preference matches
+        // the scheme name after the "#", i.e. "smithy.api#httpBearerAuth".
+        clientCfg.authSchemePreference = ["httpBearerAuth"];
+        authMode = "bearer token (api key)";
+      } else if (accessKeyId && secretAccessKey) {
+        clientCfg.credentials = { accessKeyId, secretAccessKey };
+        authMode = "sigv4 access key";
+      } else if (ambient) {
+        authMode = "ambient AWS chain";
+      } else {
+        console.error("[bedrock] no api key, no access key/secret, no ambient credentials.");
+        throw new Error(
+          "No credentials found for Bedrock. Enter your API key (bearer token) in Settings — " +
+            "or an AWS access key ID + secret — along with the endpoint and region your provider gave you.",
+        );
+      }
+
+      // Secret-safe diagnostics → Electron main-process stdout.
       console.log(
-        `[bedrock] building client: model=${cfg.model} region=${region} (${regionSource}) ` +
-          `credSource=${haveKeys ? "explicit keys" : "ambient AWS chain"} ` +
-          `endpointHost=${endpointHost || "(default)"} thinking=${thinkingOn ? "on" : "off"}`,
+        `[bedrock] model=${cfg.model} region=${region} (${regionSource}) auth=${authMode} ` +
+          `endpoint=${endpoint || "(default AWS)"} ` +
+          `apiKey=${maskKey(bearer)} accessKeyId=${maskKey(accessKeyId)} ` +
+          `thinking=${thinkingOn ? "on" : "off"}`,
       );
+
+      const client = new BedrockRuntimeClient(clientCfg);
       return new ChatBedrockConverse({
-        model: cfg.model,
+        client,
         region,
-        ...(endpointHost ? { endpointHost } : {}),
-        // Pass the canonical `credentials` object (checked first by ChatBedrockConverse
-        // and supported across all @langchain/aws versions) rather than the newer
-        // bedrockApiKey/bedrockApiSecret fields, which older versions silently ignore —
-        // causing a fall-through to the default chain and "Could not load credentials".
-        ...(accessKeyId && secretAccessKey
-          ? { credentials: { accessKeyId, secretAccessKey } }
-          : {}),
+        model: cfg.model,
         // Anthropic extended thinking on Converse goes through additionalModelRequestFields;
         // max_tokens must exceed the reasoning budget.
         ...(thinkingOn
