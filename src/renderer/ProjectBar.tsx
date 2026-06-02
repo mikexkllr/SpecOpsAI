@@ -5,6 +5,7 @@ interface Props {
   project: ProjectInfo | null;
   activeSpec: SpecInfo | null;
   onOpenProject: () => void;
+  onCloseProject: () => void;
   onSelectSpec: (spec: SpecInfo) => void;
   onCreateSpec: (name: string) => void;
 }
@@ -13,6 +14,7 @@ export function ProjectBar({
   project,
   activeSpec,
   onOpenProject,
+  onCloseProject,
   onSelectSpec,
   onCreateSpec,
 }: Props): JSX.Element {
@@ -33,6 +35,11 @@ export function ProjectBar({
       <button className="btn btn-sm" onClick={onOpenProject}>
         {project ? "change project" : "open project…"}
       </button>
+      {project && (
+        <button className="btn btn-sm btn-ghost" onClick={onCloseProject}>
+          close project
+        </button>
+      )}
       {project && (
         <div className="project-info">
           <span className="label">project</span>

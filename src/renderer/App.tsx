@@ -191,6 +191,13 @@ export function App(): JSX.Element {
     setPhase("spec");
   }
 
+  function handleCloseProject(): void {
+    setProject(null);
+    setActiveSpec(null);
+    setPhase("spec");
+    // Artifacts, messages and activity are reset by the activeSpec effect.
+  }
+
   async function handleCreateSpec(name: string): Promise<void> {
     if (!project) return;
     const spec = await window.specops.createSpec(project.path, name);
@@ -341,6 +348,7 @@ export function App(): JSX.Element {
         project={project}
         activeSpec={activeSpec}
         onOpenProject={handleOpenProject}
+        onCloseProject={handleCloseProject}
         onSelectSpec={(s) => {
           setActiveSpec(s);
           setPhase("spec");
