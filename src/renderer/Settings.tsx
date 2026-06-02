@@ -18,10 +18,25 @@ interface Props {
 export function Settings({ onClose, onSaved }: Props): JSX.Element {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [saving, setSaving] = useState(false);
+  // Snapshot of the settings as loaded, so we can detect unsaved edits and warn
+  // before the modal is dismissed.
+  const [baseline, setBaseline] = useState<string | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   useEffect(() => {
-    window.specops.getSettings().then(setSettings);
+    window.specops.getSettings().then((s) => {
+      setSettings(s);
+      setBaseline(JSON.stringify(s));
+    });
   }, []);
+
+  const dirty = baseline !== null && settings !== null && JSON.stringify(settings) !== baseline;
+
+  // Guarded dismissal: a no-op edit closes immediately, unsaved edits prompt first.
+  function requestClose(): void {
+    if (dirty) setConfirmDiscard(true);
+    else onClose();
+  }
 
   if (!settings) {
     return (
@@ -60,11 +75,11 @@ export function Settings({ onClose, onSaved }: Props): JSX.Element {
   }
 
   return (
-    <Overlay onClose={onClose}>
+    <Overlay onClose={requestClose}>
       <div className="modal">
         <div className="modal-header">
-          <div className="modal-title">settings</div>
-          <button className="btn-icon" onClick={onClose} aria-label="close">
+          <div className="modal-title">settings{dirty ? " — unsaved" : ""}</div>
+          <button className="btn-icon" onClick={requestClose} aria-label="close">
             ×
           </button>
         </div>
@@ -131,14 +146,47 @@ export function Settings({ onClose, onSaved }: Props): JSX.Element {
         </div>
 
         <div className="modal-footer">
-          <button className="btn" onClick={onClose}>
+          <button className="btn" onClick={requestClose}>
             cancel
           </button>
-          <button className="btn btn-primary" onClick={save} disabled={saving}>
+          <button className="btn btn-primary" onClick={save} disabled={saving || !dirty}>
             {saving ? "saving…" : "save"}
           </button>
         </div>
       </div>
+
+      {confirmDiscard && (
+        <div
+          className="overlay"
+          style={{ zIndex: 110 }}
+          onClick={() => setConfirmDiscard(false)}
+        >
+          <div className="modal modal-confirm" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title">unsaved changes</div>
+            </div>
+            <div style={{ padding: 18 }}>
+              <div className="section-subtitle" style={{ marginTop: 0 }}>
+                You have unsaved changes. Discard them and close, or keep editing?
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setConfirmDiscard(false)}>
+                keep editing
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={() => {
+                  setConfirmDiscard(false);
+                  onClose();
+                }}
+              >
+                discard changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Overlay>
   );
 }
