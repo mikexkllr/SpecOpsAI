@@ -73,9 +73,13 @@ export async function buildChatModel(cfg: ProviderConfig): Promise<BaseChatModel
       // Explicit access key + secret override the default AWS credential chain;
       // omit both to fall back to env vars / ~/.aws / instance role.
       const haveKeys = Boolean(cfg.accessKeyId && cfg.secretAccessKey);
+      // Custom endpoint host for company proxies / VPC (PrivateLink) endpoints.
+      // The SDK prepends https://, so strip any scheme or trailing slash the user pasted.
+      const endpointHost = cfg.baseUrl?.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
       return new ChatBedrockConverse({
         model: cfg.model,
         ...(cfg.region ? { region: cfg.region } : {}),
+        ...(endpointHost ? { endpointHost } : {}),
         ...(haveKeys
           ? { bedrockApiKey: cfg.accessKeyId, bedrockApiSecret: cfg.secretAccessKey }
           : {}),

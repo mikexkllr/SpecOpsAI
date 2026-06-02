@@ -202,6 +202,13 @@ function ProviderForm({
               placeholder="e.g. us-east-1"
             />
           </Field>
+          <Field label="endpoint host (optional)">
+            <input
+              value={cfg.baseUrl ?? ""}
+              onChange={(e) => onChange({ baseUrl: e.target.value })}
+              placeholder="proxy/VPC host — default bedrock-runtime.<region>.amazonaws.com"
+            />
+          </Field>
           <Field label="aws access key id">
             <input
               value={cfg.accessKeyId ?? ""}
