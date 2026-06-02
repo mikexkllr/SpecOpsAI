@@ -62,6 +62,7 @@ function defaultProvider(id: ProviderId): ProviderConfig {
     apiKey: d.needsApiKey ? "" : undefined,
     baseUrl: d.defaultBaseUrl,
     thinking: defaultThinking(d),
+    ...(d.needsAwsCreds ? { region: "", accessKeyId: "", secretAccessKey: "" } : {}),
   };
 }
 
@@ -91,15 +92,27 @@ function mergeSettings(raw: unknown): AppSettings {
     for (const d of PROVIDER_DESCRIPTORS) {
       const saved = (r.providers as Record<string, ProviderConfig>)[d.id];
       if (saved && typeof saved === "object") {
+        const prev = base.providers[d.id];
         base.providers[d.id] = {
           id: d.id,
           model: typeof saved.model === "string" && saved.model ? saved.model : d.defaultModel,
-          apiKey: typeof saved.apiKey === "string" ? saved.apiKey : base.providers[d.id].apiKey,
+          apiKey: typeof saved.apiKey === "string" ? saved.apiKey : prev.apiKey,
           baseUrl:
             typeof saved.baseUrl === "string" && saved.baseUrl
               ? saved.baseUrl
               : d.defaultBaseUrl,
           thinking: mergeThinking(saved.thinking, d),
+          ...(d.needsAwsCreds
+            ? {
+                region: typeof saved.region === "string" ? saved.region : prev.region,
+                accessKeyId:
+                  typeof saved.accessKeyId === "string" ? saved.accessKeyId : prev.accessKeyId,
+                secretAccessKey:
+                  typeof saved.secretAccessKey === "string"
+                    ? saved.secretAccessKey
+                    : prev.secretAccessKey,
+              }
+            : {}),
         };
       }
     }

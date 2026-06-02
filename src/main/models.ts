@@ -5,6 +5,7 @@ type AnthropicMod = typeof import("@langchain/anthropic");
 type OpenAIMod = typeof import("@langchain/openai");
 type GoogleMod = typeof import("@langchain/google-genai");
 type OllamaMod = typeof import("@langchain/ollama");
+type BedrockMod = typeof import("@langchain/aws");
 
 function esm<T>(spec: string): Promise<T> {
   return Function(`return import("${spec}")`)() as Promise<T>;
@@ -22,6 +23,7 @@ export async function buildChatModel(cfg: ProviderConfig): Promise<BaseChatModel
       return new ChatAnthropic({
         apiKey: cfg.apiKey,
         model: cfg.model,
+        ...(cfg.baseUrl ? { anthropicApiUrl: cfg.baseUrl } : {}),
         ...(thinkingOn
           ? {
               thinking: { type: "enabled" as const, budget_tokens: budget },
@@ -63,6 +65,30 @@ export async function buildChatModel(cfg: ProviderConfig): Promise<BaseChatModel
         baseUrl: cfg.baseUrl || "http://localhost:11434",
         model: cfg.model,
         ...(thinkingOn ? { think: true } : {}),
+      });
+    }
+    case "bedrock": {
+      const { ChatBedrockConverse } = await esm<BedrockMod>("@langchain/aws");
+      const budget = t?.budgetTokens ?? 2048;
+      // Explicit access key + secret override the default AWS credential chain;
+      // omit both to fall back to env vars / ~/.aws / instance role.
+      const haveKeys = Boolean(cfg.accessKeyId && cfg.secretAccessKey);
+      return new ChatBedrockConverse({
+        model: cfg.model,
+        ...(cfg.region ? { region: cfg.region } : {}),
+        ...(haveKeys
+          ? { bedrockApiKey: cfg.accessKeyId, bedrockApiSecret: cfg.secretAccessKey }
+          : {}),
+        // Anthropic extended thinking on Converse goes through additionalModelRequestFields;
+        // max_tokens must exceed the reasoning budget.
+        ...(thinkingOn
+          ? {
+              maxTokens: budget + 4096,
+              additionalModelRequestFields: {
+                reasoning_config: { type: "enabled", budget_tokens: budget },
+              },
+            }
+          : {}),
       });
     }
   }

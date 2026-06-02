@@ -252,7 +252,7 @@ export interface MergeResult {
   error?: string;
 }
 
-export type ProviderId = "anthropic" | "openai" | "google" | "ollama";
+export type ProviderId = "anthropic" | "openai" | "google" | "ollama" | "bedrock";
 
 // How a provider exposes extended thinking / reasoning, and thus which control
 // the Settings form renders for it:
@@ -274,6 +274,11 @@ export interface ProviderConfig {
   apiKey?: string;
   baseUrl?: string;
   thinking?: ThinkingConfig;
+  // AWS Bedrock (Converse API) only. Leave credentials blank to fall back to the
+  // default AWS credential chain (env vars, ~/.aws, instance role…).
+  region?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
 }
 
 export type AgentMode = "yolo" | "hitl";
@@ -290,6 +295,7 @@ export interface ProviderDescriptor {
   id: ProviderId;
   label: string;
   needsApiKey: boolean;
+  needsAwsCreds?: boolean; // renders AWS region + access key/secret fields (Bedrock)
   defaultBaseUrl?: string;
   defaultModel: string;
   suggestedModels: string[];
@@ -303,6 +309,7 @@ export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
     id: "anthropic",
     label: "Anthropic",
     needsApiKey: true,
+    defaultBaseUrl: "https://api.anthropic.com",
     defaultModel: "claude-sonnet-4-5",
     suggestedModels: ["claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5"],
     description: "Claude models via api.anthropic.com.",
@@ -339,6 +346,22 @@ export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
     suggestedModels: ["llama3.1", "qwen2.5-coder", "mistral"],
     description: "Local models via Ollama.",
     thinking: "toggle",
+  },
+  {
+    id: "bedrock",
+    label: "AWS Bedrock (Converse)",
+    needsApiKey: false,
+    needsAwsCreds: true,
+    defaultModel: "anthropic.claude-sonnet-4-5-20250929-v1:0",
+    suggestedModels: [
+      "anthropic.claude-sonnet-4-5-20250929-v1:0",
+      "anthropic.claude-haiku-4-5-20251001-v1:0",
+      "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    ],
+    description:
+      "Claude (and other) models via the AWS Bedrock Converse API. Authenticates with AWS credentials + region instead of an Anthropic key.",
+    thinking: "budget",
+    defaultThinkingBudget: 2048,
   },
 ];
 

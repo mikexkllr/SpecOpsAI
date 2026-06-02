@@ -72,9 +72,13 @@ export async function runCliAgent(opts: CliAgentOptions): Promise<string> {
   switch (agentId) {
     case "claude-code":
       cmd = "claude";
+      // Headless `--print` can't answer permission prompts, so plain HITL leaves
+      // the agent unable to write files (it gives up after a few denied tries).
+      // The human gate in SpecOps is the post-run task approval, not per-edit
+      // prompts — so HITL auto-accepts file edits, YOLO skips all permissions.
       args = yolo
         ? ["--print", "--dangerously-skip-permissions"]
-        : ["--print"];
+        : ["--print", "--permission-mode", "acceptEdits"];
       stdinPrompt = prompt;
       break;
     case "gh-copilot":

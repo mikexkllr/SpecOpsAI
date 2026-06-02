@@ -193,6 +193,33 @@ function ProviderForm({
         </Field>
       )}
 
+      {d.needsAwsCreds && (
+        <>
+          <Field label="aws region">
+            <input
+              value={cfg.region ?? ""}
+              onChange={(e) => onChange({ region: e.target.value })}
+              placeholder="e.g. us-east-1"
+            />
+          </Field>
+          <Field label="aws access key id">
+            <input
+              value={cfg.accessKeyId ?? ""}
+              onChange={(e) => onChange({ accessKeyId: e.target.value })}
+              placeholder="blank → use default AWS credential chain"
+            />
+          </Field>
+          <Field label="aws secret access key">
+            <input
+              type="password"
+              value={cfg.secretAccessKey ?? ""}
+              onChange={(e) => onChange({ secretAccessKey: e.target.value })}
+              placeholder="stored on this device"
+            />
+          </Field>
+        </>
+      )}
+
       <ThinkingField
         descriptor={d}
         thinking={cfg.thinking}
