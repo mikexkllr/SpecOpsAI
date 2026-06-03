@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage } from "electron";
 import * as path from "path";
 import type {
   AgentTurnRequest,
@@ -51,12 +51,22 @@ import { runReviewerAgent } from "./reviewer";
 
 const isDev = !app.isPackaged;
 
+// Branding: replace the default "Electron" name/icon in the menu bar, dock,
+// and cmd-tab switcher.
+const APP_NAME = "SpecOps AI";
+app.setName(APP_NAME);
+
+const iconPath = path.join(app.getAppPath(), "assets/icon.png");
+const appIcon = nativeImage.createFromPath(iconPath);
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
     frame: false,
     backgroundColor: "#0b0b0c",
+    title: APP_NAME,
+    icon: appIcon,
     webPreferences: {
       preload: path.join(__dirname, "../preload/preload.js"),
       contextIsolation: true,
@@ -200,6 +210,9 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === "darwin" && !appIcon.isEmpty()) {
+    app.dock?.setIcon(appIcon);
+  }
   registerIpc();
   createWindow();
 

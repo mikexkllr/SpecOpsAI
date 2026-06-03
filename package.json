@@ -1,5 +1,6 @@
 {
   "name": "specops-ai",
+  "productName": "SpecOps AI",
   "version": "0.1.0",
   "description": "Spec-Driven Development desktop IDE with integrated AI agent",
   "main": "dist/main/main.js",
@@ -14,6 +15,7 @@
     "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\"",
+    "icon": "node scripts/render-icon.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
