@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from "electron";
 import * as path from "path";
 import type {
   AgentTurnRequest,
@@ -6,6 +6,7 @@ import type {
   ArtifactFiles,
   ChatHistory,
   CodeReviewRequest,
+  GenerateCodeReviewRequest,
   GenerateIntegrationTestsRequest,
   GenerateUnitTestsRequest,
   ReviewTaskRequest,
@@ -48,18 +49,51 @@ import {
   stopTestLoop,
 } from "./test-loop";
 import { onCliChunk } from "./cliAgent";
-import { runReviewerAgent, runCodeReview } from "./reviewer";
+import { runReviewerAgent, runCodeReview, generateCodeReview } from "./reviewer";
 import { readProjectTree, readProjectFile, writeProjectFile } from "./codeFiles";
 
 const isDev = !app.isPackaged;
 
 // Branding: replace the default "Electron" name/icon in the menu bar, dock,
-// and cmd-tab switcher.
-const APP_NAME = "SpecOps AI";
+// and cmd-tab switcher. Set the name as early as possible (before `whenReady`)
+// so the macOS application menu and dock pick it up even in dev, where the
+// running binary is still `Electron`.
+const APP_NAME = "SpecOps";
 app.setName(APP_NAME);
+// `app.name` (the setter) is what the default application menu reads for the
+// first menu's title; setting both is the reliable way to drop "Electron".
+app.name = APP_NAME;
 
 const iconPath = path.join(app.getAppPath(), "assets/icon.png");
 const appIcon = nativeImage.createFromPath(iconPath);
+
+// A custom application menu whose first item is labelled with APP_NAME — in
+// dev the default menu would otherwise title the app menu "Electron".
+function buildAppMenu(): void {
+  const isMac = process.platform === "darwin";
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [
+          {
+            label: APP_NAME,
+            submenu: [
+              { role: "about" as const },
+              { type: "separator" as const },
+              { role: "hide" as const },
+              { role: "hideOthers" as const },
+              { role: "unhide" as const },
+              { type: "separator" as const },
+              { role: "quit" as const },
+            ],
+          },
+        ]
+      : []),
+    { role: "editMenu" },
+    { role: "viewMenu" },
+    { role: "windowMenu" },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -190,6 +224,9 @@ function registerIpc(): void {
     (_e, specPath: string, relPath: string, content: string) =>
       writeProjectFile(specPath, relPath, content),
   );
+  ipcMain.handle("code:generate-review", (_e, request: GenerateCodeReviewRequest) =>
+    generateCodeReview(request),
+  );
   ipcMain.handle("code:review", (_e, request: CodeReviewRequest) =>
     runCodeReview(request),
   );
@@ -228,6 +265,11 @@ app.whenReady().then(() => {
   if (process.platform === "darwin" && !appIcon.isEmpty()) {
     app.dock?.setIcon(appIcon);
   }
+  app.setAboutPanelOptions({
+    applicationName: APP_NAME,
+    applicationVersion: app.getVersion(),
+  });
+  buildAppMenu();
   registerIpc();
   createWindow();
 

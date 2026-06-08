@@ -4,8 +4,13 @@ import { z } from "zod";
 import type * as DeepAgents from "deepagents";
 import type {
   ArtifactFiles,
+  CodeReviewReport,
   CodeReviewRequest,
   CodeReviewResult,
+  FileChangeStatus,
+  FileReview,
+  GenerateCodeReviewRequest,
+  MarkedTask,
   ReviewVerdict,
   TaskChunk,
   TechnicalStory,
@@ -16,6 +21,7 @@ import { buildChatModel } from "./models";
 import { getActiveProvider } from "./settings";
 import { loadDeps, createFsBackend } from "./deepagentsDeps";
 import { makeBrowserTools, closeBrowser } from "./browserTools";
+import { readWorkers, updateTaskStatus } from "./worker";
 import { projectRoot, isAbortError, lastAssistantText } from "./utils";
 
 const execFileAsync = promisify(execFile);
@@ -169,39 +175,228 @@ export async function runReviewerAgent(opts: ReviewerOptions): Promise<ReviewRes
 }
 
 // ---------------------------------------------------------------------------
-// Interactive code review (Code Studio).
+// Code Studio — a custom coding agent that reviews the branch's work.
 //
-// Unlike runReviewerAgent (which is task-bound and emits a structured verdict),
-// this is a free-form conversational reviewer: it reads the working-tree diff
-// and any file the user is focused on, then answers in markdown. The renderer
-// keeps a running history so the user can ask follow-ups ("now check error
-// handling", "is this thread-safe?").
+// generateCodeReview produces a GitHub / Devin-style review: a structured,
+// per-file description of the changes (the agent describing its own work),
+// grounded in the spec, user stories and technical stories. It can also mark a
+// technical-story task as implemented on its own when the diff satisfies it.
+//
+// runCodeReview is the follow-up Q&A: the developer asks questions about that
+// review and the agent answers in markdown, with the report for context.
 
-function codeReviewSystemPrompt(req: CodeReviewRequest): string {
+async function readWorkingTreeDiff(root: string): Promise<string> {
+  try {
+    const { stdout: diff } = await execFileAsync("git", ["diff", "HEAD"], {
+      cwd: root,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    // `git diff` omits brand-new files (they're untracked), but those are often
+    // the most important part of a changeset — list them so the agent reads them.
+    const { stdout: untracked } = await execFileAsync(
+      "git",
+      ["ls-files", "--others", "--exclude-standard"],
+      { cwd: root },
+    );
+    const parts: string[] = [];
+    if (diff.trim()) parts.push(diff.trim());
+    if (untracked.trim()) {
+      parts.push(
+        "## Untracked (new) files — not shown in the diff above; read them directly:\n" +
+          untracked.trim(),
+      );
+    }
+    return parts.length ? parts.join("\n\n") : "(working tree clean — no uncommitted changes)";
+  } catch (err) {
+    return `Could not run git diff: ${(err as Error).message}`;
+  }
+}
+
+function specContextSections(artifacts: ArtifactFiles): string[] {
+  const out: string[] = [];
+  if (artifacts.spec.trim()) out.push("## Spec", artifacts.spec.trim(), "");
+  if (artifacts.userStories.trim())
+    out.push("## User Stories", artifacts.userStories.trim(), "");
+  if (artifacts.technicalStories.trim())
+    out.push("## Technical Stories", artifacts.technicalStories.trim(), "");
+  return out;
+}
+
+function normalizeStatus(raw: unknown): FileChangeStatus {
+  return raw === "added" || raw === "deleted" || raw === "renamed" ? raw : "modified";
+}
+
+export async function generateCodeReview(
+  req: GenerateCodeReviewRequest,
+): Promise<CodeReviewReport> {
+  const root = projectRoot(req.specPath);
+  const empty: CodeReviewReport = { overview: "", files: [], markedImplemented: [] };
+  try {
+    const cfg = await getActiveProvider();
+    const { deepagents, messages: M, tools: T } = await loadDeps();
+    const model = await buildChatModel(cfg);
+
+    // Snapshot of every open (not-yet-done) task, so the agent knows what it is
+    // allowed to mark implemented and by which id.
+    const store = await readWorkers(req.specPath);
+    const openTasks: Array<{ storyId: string; taskId: string; title: string; status: string }> =
+      [];
+    for (const [storyId, state] of Object.entries(store)) {
+      for (const t of state.tasks) {
+        if (t.status !== "done") {
+          openTasks.push({ storyId, taskId: t.id, title: t.title, status: t.status });
+        }
+      }
+    }
+    const taskIndex = new Map(openTasks.map((t) => [`${t.storyId}::${t.taskId}`, t]));
+    const marked: MarkedTask[] = [];
+
+    let captured: CodeReviewReport | null = null;
+
+    const listTasks = T.tool(
+      async () =>
+        openTasks.length
+          ? openTasks
+              .map((t) => `- ${t.storyId} / ${t.taskId} [${t.status}] — ${t.title}`)
+              .join("\n")
+          : "(no open tasks — nothing to mark)",
+      {
+        name: "list_open_tasks",
+        description:
+          "List technical-story tasks that are not yet done, with their storyId and taskId — the candidates you may mark implemented.",
+        schema: z.object({}),
+      },
+    );
+
+    const markTask = T.tool(
+      async (input: { storyId: string; taskId: string }) => {
+        const key = `${input.storyId}::${input.taskId}`;
+        const task = taskIndex.get(key);
+        if (!task) return `No open task ${input.taskId} in story ${input.storyId}.`;
+        await updateTaskStatus(req.specPath, input.storyId, input.taskId, "done");
+        if (!marked.some((m) => m.storyId === input.storyId && m.taskId === input.taskId)) {
+          marked.push({ storyId: input.storyId, taskId: input.taskId, title: task.title });
+        }
+        return `Marked ${input.taskId} as implemented.`;
+      },
+      {
+        name: "mark_task_implemented",
+        description:
+          "Mark a technical-story task as implemented (done) when the changes clearly satisfy it. Use storyId + taskId from list_open_tasks.",
+        schema: z.object({ storyId: z.string(), taskId: z.string() }),
+      },
+    );
+
+    const emitReview = T.tool(
+      async (input: {
+        overview: string;
+        files: Array<{ path: string; status?: string; summary: string }>;
+      }) => {
+        captured = {
+          overview: input.overview,
+          files: input.files.map((f) => ({
+            path: f.path,
+            status: normalizeStatus(f.status),
+            summary: f.summary,
+          })),
+          markedImplemented: [],
+        };
+        return "Review captured.";
+      },
+      {
+        name: "emit_review",
+        description:
+          "Submit the finished review. Call exactly once: an overall `overview`, then one `files` entry per changed file describing what you changed and why.",
+        schema: z.object({
+          overview: z.string().describe("Overall summary of the changeset (2–5 sentences)."),
+          files: z
+            .array(
+              z.object({
+                path: z.string().describe("Repo-relative path of the changed file."),
+                status: z
+                  .enum(["added", "modified", "deleted", "renamed"])
+                  .optional(),
+                summary: z
+                  .string()
+                  .describe("What changed in this file and why, in your own words."),
+              }),
+            )
+            .describe("One entry per changed file."),
+        }),
+      },
+    );
+
+    const system = [
+      "You are a custom coding agent reviewing the work on the current branch — like a GitHub pull-request author writing a self-review, in the style of Devin's code reviews.",
+      "You have full access to the project's Spec, User Stories, and Technical Stories below, plus the working-tree diff and the source tree.",
+      "",
+      "## Your job",
+      "1. Call `git_diff` to see the uncommitted changes.",
+      "2. Read the relevant files with your filesystem tools to understand the changes in context.",
+      "3. Call `list_open_tasks` to see which technical-story tasks are still open.",
+      "4. For every task the diff clearly and fully implements, call `mark_task_implemented`. Be conservative — only mark what the code actually does.",
+      "5. Call `emit_review` exactly once: an `overview` of the whole changeset, then a per-file `summary` describing — in your own words — what you changed in that file and why it aligns with the spec/stories. Flag anything risky or incomplete in the relevant file summary.",
+      "",
+      "Describe the changes as the author who made them. Be concrete; reference symbols and behavior. Do not invent files that aren't in the diff.",
+      "",
+      ...specContextSections(req.artifacts),
+    ].join("\n");
+
+    const gitDiffTool = T.tool(() => readWorkingTreeDiff(root), {
+      name: "git_diff",
+      description: "Return the diff of uncommitted changes in the working tree.",
+      schema: z.object({}),
+    });
+
+    const backend = await buildReviewerBackend(root);
+    const agent = deepagents.createDeepAgent({
+      model,
+      systemPrompt: system,
+      tools: [gitDiffTool, listTasks, markTask, emitReview],
+      backend,
+    });
+
+    await agent.invoke({
+      messages: [
+        new M.HumanMessage(
+          "Review the current changes now: inspect the diff, mark any fully-implemented tasks, then call emit_review.",
+        ),
+      ],
+    });
+
+    const report = (captured as CodeReviewReport | null) ?? empty;
+    return { ...report, markedImplemented: marked };
+  } catch (err) {
+    return { ...empty, error: (err as Error).message };
+  }
+}
+
+function qaSystemPrompt(req: CodeReviewRequest): string {
   const sections: string[] = [
-    "You are a senior engineer doing an INTERACTIVE code review inside an IDE.",
-    "The developer will ask you to review code or answer questions about it. Be concrete and specific — cite file paths and, where useful, short code excerpts.",
-    "",
-    "## How to work",
-    "- Use `git_diff` to see uncommitted changes in the working tree.",
-    "- Use your filesystem tools (`read_file`, `glob`, `grep`, `ls`) to read the actual source — never guess at code you can read.",
-    "- When you spot a real issue, explain WHY it's a problem and suggest a concrete fix (a snippet or an edit). Distinguish blocking bugs from nits.",
-    "- If the code looks good, say so plainly. Don't invent problems.",
-    "- Reply in markdown. Keep it focused on what the developer asked; don't dump a full audit unless asked.",
+    "You are a custom coding agent answering the developer's questions about a code review you just produced.",
+    "You have access to the Spec, User Stories, Technical Stories, the review report, the working-tree diff (`git_diff`), and filesystem read tools.",
+    "Answer concisely in markdown, citing file paths and short code excerpts where useful. Read the real source before claiming anything about it.",
   ];
   if (req.focusPath) {
+    sections.push("", `The developer is currently viewing \`${req.focusPath}\`.`);
+  }
+  if (req.report) {
     sections.push(
       "",
-      `## Focused file`,
-      `The developer is currently looking at \`${req.focusPath}\`. Prioritize it unless they ask otherwise.`,
+      "## The review you produced",
+      req.report.overview.trim() || "(no overview)",
+      ...req.report.files.map((f) => `- \`${f.path}\` (${f.status}): ${f.summary}`),
     );
+    if (req.report.markedImplemented.length) {
+      sections.push(
+        "",
+        "Tasks you marked implemented: " +
+          req.report.markedImplemented.map((m) => m.taskId).join(", "),
+      );
+    }
   }
-  if (req.artifacts.spec.trim()) {
-    sections.push("", "## Spec (for alignment)", req.artifacts.spec.trim());
-  }
-  if (req.artifacts.technicalStories.trim()) {
-    sections.push("", "## Technical Stories", req.artifacts.technicalStories.trim());
-  }
+  const ctx = specContextSections(req.artifacts);
+  if (ctx.length) sections.push("", ...ctx);
   return sections.join("\n");
 }
 
@@ -212,33 +407,16 @@ export async function runCodeReview(req: CodeReviewRequest): Promise<CodeReviewR
     const { deepagents, messages: M, tools: T } = await loadDeps();
     const model = await buildChatModel(cfg);
 
-    const gitDiffTool = T.tool(
-      async () => {
-        try {
-          const { stdout } = await execFileAsync("git", ["diff", "HEAD"], { cwd: root });
-          if (stdout.trim()) return stdout.trim();
-          const { stdout: untracked } = await execFileAsync(
-            "git",
-            ["status", "--porcelain"],
-            { cwd: root },
-          );
-          return untracked.trim() || "(working tree clean — no uncommitted changes)";
-        } catch (err) {
-          return `Could not run git diff: ${(err as Error).message}`;
-        }
-      },
-      {
-        name: "git_diff",
-        description:
-          "Return the diff of uncommitted changes in the working tree. Call this to see what the developer just changed.",
-        schema: z.object({}),
-      },
-    );
+    const gitDiffTool = T.tool(() => readWorkingTreeDiff(root), {
+      name: "git_diff",
+      description: "Return the diff of uncommitted changes in the working tree.",
+      schema: z.object({}),
+    });
 
     const backend = await buildReviewerBackend(root);
     const agent = deepagents.createDeepAgent({
       model,
-      systemPrompt: codeReviewSystemPrompt(req),
+      systemPrompt: qaSystemPrompt(req),
       tools: [gitDiffTool],
       backend,
     });

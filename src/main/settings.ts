@@ -75,7 +75,7 @@ function defaultProvider(id: ProviderId): ProviderConfig {
 function defaultSettings(): AppSettings {
   const providers = {} as Record<ProviderId, ProviderConfig>;
   for (const d of PROVIDER_DESCRIPTORS) providers[d.id] = defaultProvider(d.id);
-  return { activeProvider: "anthropic", providers, agentMode: "hitl", codingAgent: "claude-code", devServerUrl: undefined };
+  return { activeProvider: "anthropic", providers, agentMode: "hitl", codingAgent: "deepagent", devServerUrl: undefined };
 }
 
 function mergeSettings(raw: unknown): AppSettings {

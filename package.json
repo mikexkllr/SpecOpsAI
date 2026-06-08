@@ -1,6 +1,6 @@
 {
   "name": "specops-ai",
-  "productName": "SpecOps AI",
+  "productName": "SpecOps",
   "version": "0.1.0",
   "description": "Spec-Driven Development desktop IDE with integrated AI agent",
   "main": "dist/main/main.js",
@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/prismjs": "^1.26.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@typescript-eslint/eslint-plugin": "^8.59.1",
@@ -48,9 +49,11 @@
     "deepagents": "^1.9.0",
     "marked": "^18.0.0",
     "playwright": "^1.60.0",
+    "prismjs": "^1.30.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown-editor-lite": "^1.4.2",
+    "react-simple-code-editor": "^0.14.1",
     "zod": "^3.23.8"
   },
   "overrides": {

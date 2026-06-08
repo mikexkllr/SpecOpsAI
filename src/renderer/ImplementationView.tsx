@@ -15,21 +15,20 @@ import type {
 import type { Artifacts } from "./phases";
 import { parseTechnicalStories } from "./technical-stories";
 import { parseUserStories } from "./user-stories";
-import { MarkdownEditor } from "./MarkdownEditor";
 import { StoryList } from "./components/StoryList";
 import { StoryWorkspace } from "./components/StoryWorkspace";
 import { IntegrationTestsPanel } from "./components/IntegrationTestsPanel";
 import { TestLoopPanel } from "./components/TestLoopPanel";
-import { CodeStudio } from "./components/CodeStudio";
+import { CodeReviewer } from "./components/CodeReviewer";
+import { CodeEditor, type OpenFileRequest } from "./components/CodeEditor";
 
 interface ImplementationViewProps {
   specPath: string;
   artifacts: Artifacts;
   agentMode: "hitl" | "yolo";
-  onCodeChange: (code: string) => void;
 }
 
-type Tab = "stories" | "codestudio" | "integration" | "testloop" | "code";
+type Tab = "stories" | "reviewer" | "integration" | "testloop" | "editor";
 
 function toApiArtifacts(a: Artifacts): ArtifactFiles {
   return {
@@ -44,7 +43,6 @@ export function ImplementationView({
   specPath,
   artifacts,
   agentMode,
-  onCodeChange,
 }: ImplementationViewProps): JSX.Element {
   const stories = useMemo(
     () => parseTechnicalStories(artifacts.technicalStories),
@@ -55,6 +53,9 @@ export function ImplementationView({
     [artifacts.userStories],
   );
   const [tab, setTab] = useState<Tab>("stories");
+  // A one-shot request to open a file in the code editor view — set when the
+  // user clicks a file in the (separate) reviewer view.
+  const [editorRequest, setEditorRequest] = useState<OpenFileRequest | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(stories[0]?.id ?? null);
   const [store, setStore] = useState<WorkerStore>({});
   const [busy, setBusy] = useState<"decompose" | "chat" | "run" | "tests" | null>(
@@ -86,6 +87,13 @@ export function ImplementationView({
   useEffect(() => {
     window.specops.readWorkers(specPath).then(setStore);
   }, [specPath]);
+
+  // Re-read the worker store when returning to the workers tab (while idle), so
+  // tasks the code-review agent marked implemented on its own show up here.
+  useEffect(() => {
+    if (tab !== "stories" || busy !== null) return;
+    window.specops.readWorkers(specPath).then(setStore);
+  }, [tab, specPath, busy]);
 
   useEffect(() => {
     if (selectedId && stories.find((s) => s.id === selectedId)) return;
@@ -348,24 +356,27 @@ export function ImplementationView({
     }
   }
 
-  if (tab === "codestudio") {
+  if (tab === "reviewer") {
     return (
       <div className="flex-col flex-1">
         <Tabs tab={tab} onChange={setTab} />
-        <CodeStudio specPath={specPath} artifacts={artifacts} />
+        <CodeReviewer
+          specPath={specPath}
+          artifacts={artifacts}
+          onOpenFile={(path) => {
+            setEditorRequest({ path, id: Date.now() });
+            setTab("editor");
+          }}
+        />
       </div>
     );
   }
 
-  if (tab === "code") {
+  if (tab === "editor") {
     return (
       <div className="flex-col flex-1">
         <Tabs tab={tab} onChange={setTab} />
-        <MarkdownEditor
-          value={artifacts.code}
-          onChange={(v) => onCodeChange(v)}
-          placeholder="// code notes — implementation agent will drive real edits"
-        />
+        <CodeEditor specPath={specPath} openRequest={editorRequest} />
       </div>
     );
   }
@@ -460,10 +471,10 @@ export function ImplementationView({
 function Tabs({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }): JSX.Element {
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: "stories", label: "workers" },
-    { id: "codestudio", label: "code" },
+    { id: "reviewer", label: "code review" },
     { id: "integration", label: "integration tests" },
     { id: "testloop", label: "test loop" },
-    { id: "code", label: "code notes" },
+    { id: "editor", label: "code editor" },
   ];
   return (
     <div className="tabs">

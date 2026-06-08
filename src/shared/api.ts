@@ -277,15 +277,48 @@ export interface ProjectFileResult {
   tooLarge: boolean;
 }
 
+export type FileChangeStatus = "added" | "modified" | "deleted" | "renamed";
+
+// One file's entry in a GitHub/Devin-style review: the agent's own description
+// of what it changed in that file and why.
+export interface FileReview {
+  path: string;
+  status: FileChangeStatus;
+  summary: string;
+}
+
+// A technical-story task the agent decided was satisfied by the changes and
+// marked implemented on its own.
+export interface MarkedTask {
+  storyId: string;
+  taskId: string;
+  title: string;
+}
+
+export interface CodeReviewReport {
+  overview: string;
+  files: FileReview[];
+  markedImplemented: MarkedTask[];
+  error?: string;
+}
+
+export interface GenerateCodeReviewRequest {
+  specPath: string;
+  artifacts: ArtifactFiles;
+}
+
+// A follow-up question about an existing review (the Q&A chat). The review
+// `report` is passed back so answers stay grounded in what was reviewed.
 export interface CodeReviewRequest {
   specPath: string;
   // The file the user is focused on in the editor, if any.
   focusPath?: string;
-  // The user's question / what they want reviewed this turn.
+  // The user's question about the review.
   instruction: string;
-  // Prior interactive-review turns, so the reviewer keeps context.
+  // Prior Q&A turns, so the agent keeps context.
   history: AgentTurn[];
   artifacts: ArtifactFiles;
+  report?: CodeReviewReport;
 }
 
 export interface CodeReviewResult {
@@ -446,6 +479,7 @@ export interface SpecOpsApi {
   readProjectTree(specPath: string): Promise<FileNode[]>;
   readProjectFile(specPath: string, relPath: string): Promise<ProjectFileResult>;
   writeProjectFile(specPath: string, relPath: string, content: string): Promise<void>;
+  generateCodeReview(request: GenerateCodeReviewRequest): Promise<CodeReviewReport>;
   reviewCode(request: CodeReviewRequest): Promise<CodeReviewResult>;
   startTestLoop(request: TestLoopRequest): Promise<void>;
   stopTestLoop(): Promise<void>;

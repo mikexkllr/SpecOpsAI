@@ -364,7 +364,6 @@ export function App(): JSX.Element {
                 specPath={activeSpec.path}
                 artifacts={artifacts}
                 agentMode={settings?.agentMode ?? "hitl"}
-                onCodeChange={(code) => updateArtifacts({ code })}
               />
             </div>
           ) : (

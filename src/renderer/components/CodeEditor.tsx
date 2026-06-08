@@ -1,23 +1,76 @@
-import React, { useEffect, useRef, useState } from "react";
-import type { AgentTurn, ArtifactFiles, FileNode } from "../../shared/api";
-import type { Artifacts } from "../phases";
-import { renderMarkdown } from "../markdown";
+import React, { useEffect, useState } from "react";
+import Editor from "react-simple-code-editor";
+import Prism from "prismjs";
+// Order matters: tsx extends jsx + typescript, so its deps load first. markup,
+// css, clike and javascript ship in prismjs core.
+import "prismjs/components/prism-typescript";
+import "prismjs/components/prism-jsx";
+import "prismjs/components/prism-tsx";
+import "prismjs/components/prism-json";
+import "prismjs/components/prism-css";
+import "prismjs/components/prism-python";
+import "prismjs/components/prism-bash";
+import "prismjs/components/prism-yaml";
+import "prismjs/components/prism-markdown";
+import type { FileNode } from "../../shared/api";
 
-interface CodeStudioProps {
+// A request from another view (e.g. the reviewer) to open a specific file. The
+// `id` makes repeat requests for the same path re-trigger the open effect.
+export interface OpenFileRequest {
+  path: string;
+  id: number;
+}
+
+interface CodeEditorProps {
   specPath: string;
-  artifacts: Artifacts;
+  openRequest?: OpenFileRequest | null;
 }
 
-function toApiArtifacts(a: Artifacts): ArtifactFiles {
-  return {
-    spec: a.spec,
-    userStories: a.userStories,
-    technicalStories: a.technicalStories,
-    code: a.code,
-  };
+const LANG_BY_EXT: Record<string, string> = {
+  ts: "typescript",
+  mts: "typescript",
+  cts: "typescript",
+  tsx: "tsx",
+  js: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  jsx: "jsx",
+  json: "json",
+  css: "css",
+  scss: "css",
+  less: "css",
+  html: "markup",
+  htm: "markup",
+  xml: "markup",
+  svg: "markup",
+  vue: "markup",
+  md: "markdown",
+  markdown: "markdown",
+  py: "python",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  yml: "yaml",
+  yaml: "yaml",
+};
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-export function CodeStudio({ specPath, artifacts }: CodeStudioProps): JSX.Element {
+function highlight(code: string, path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const lang = LANG_BY_EXT[ext];
+  const grammar = lang ? Prism.languages[lang] : undefined;
+  if (!grammar) return escapeHtml(code);
+  try {
+    return Prism.highlight(code, grammar, lang);
+  } catch {
+    return escapeHtml(code);
+  }
+}
+
+export function CodeEditor({ specPath, openRequest }: CodeEditorProps): JSX.Element {
   const [tree, setTree] = useState<FileNode[] | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [openPath, setOpenPath] = useState<string | null>(null);
@@ -26,12 +79,6 @@ export function CodeStudio({ specPath, artifacts }: CodeStudioProps): JSX.Elemen
   const [loadingFile, setLoadingFile] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
   const [saving, setSaving] = useState(false);
-
-  const [reviewTurns, setReviewTurns] = useState<AgentTurn[]>([]);
-  const [reviewDraft, setReviewDraft] = useState("");
-  const [reviewing, setReviewing] = useState(false);
-
-  const reviewScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,9 +94,11 @@ export function CodeStudio({ specPath, artifacts }: CodeStudioProps): JSX.Elemen
     };
   }, [specPath]);
 
+  // Open a file requested by another view (the reviewer's "open in editor").
   useEffect(() => {
-    reviewScrollRef.current?.scrollTo({ top: reviewScrollRef.current.scrollHeight });
-  }, [reviewTurns.length, reviewing]);
+    if (openRequest) void openFile(openRequest.path);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openRequest?.id]);
 
   const dirty = openPath !== null && !readOnly && content !== savedContent;
 
@@ -95,39 +144,8 @@ export function CodeStudio({ specPath, artifacts }: CodeStudioProps): JSX.Elemen
     });
   }
 
-  async function runReview(): Promise<void> {
-    if (reviewing) return;
-    const instruction =
-      reviewDraft.trim() ||
-      (openPath ? `Review \`${openPath}\`.` : "Review my latest uncommitted changes.");
-    setReviewDraft("");
-    const history = reviewTurns;
-    setReviewTurns((t) => [...t, { role: "user", text: instruction }]);
-    setReviewing(true);
-    try {
-      const res = await window.specops.reviewCode({
-        specPath,
-        focusPath: openPath ?? undefined,
-        instruction,
-        history,
-        artifacts: toApiArtifacts(artifacts),
-      });
-      setReviewTurns((t) => [
-        ...t,
-        { role: "agent", text: res.error ? `Review error: ${res.error}` : res.markdown },
-      ]);
-    } catch (err) {
-      setReviewTurns((t) => [
-        ...t,
-        { role: "agent", text: `Review error: ${(err as Error).message}` },
-      ]);
-    } finally {
-      setReviewing(false);
-    }
-  }
-
   return (
-    <div className="code-studio">
+    <div className="code-editor-view">
       <div className="code-tree">
         <div className="code-tree-head">
           <span>explorer</span>
@@ -171,85 +189,41 @@ export function CodeStudio({ specPath, artifacts }: CodeStudioProps): JSX.Elemen
                 {saving ? "saving…" : "save"}
               </button>
             )}
-            {openPath && (
-              <button
-                className="btn btn-sm"
-                onClick={() => {
-                  setReviewDraft(`Review \`${openPath}\` for bugs and quality.`);
-                }}
-                title="ask the reviewer about this file"
-              >
-                review →
-              </button>
-            )}
           </div>
         </div>
         {openPath ? (
-          <textarea
-            className="code-editor"
-            value={loadingFile ? "// loading…" : content}
-            readOnly={readOnly || loadingFile}
-            spellCheck={false}
-            onChange={(e) => setContent(e.target.value)}
-            onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
-                e.preventDefault();
-                void save();
-              }
-            }}
-          />
+          <div className="code-editor-scroll">
+            <Editor
+              value={loadingFile ? "// loading…" : content}
+              onValueChange={(v) => {
+                if (!readOnly && !loadingFile) setContent(v);
+              }}
+              highlight={(code) => highlight(code, openPath)}
+              readOnly={readOnly || loadingFile}
+              padding={16}
+              tabSize={2}
+              textareaClassName="cm-textarea"
+              preClassName="cm-pre"
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+                  e.preventDefault();
+                  void save();
+                }
+              }}
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 13,
+                lineHeight: 1.6,
+                minHeight: "100%",
+                color: "var(--fg-0)",
+              }}
+            />
+          </div>
         ) : (
           <div className="code-editor-empty">
             select a file from the explorer to view and edit it
           </div>
         )}
-      </div>
-
-      <div className="code-review-pane">
-        <div className="code-review-head">interactive reviewer</div>
-        <div ref={reviewScrollRef} className="code-review-log">
-          {reviewTurns.length === 0 && !reviewing ? (
-            <div className="code-review-empty">
-              Ask for a review of the open file or your latest changes. The reviewer reads
-              the working-tree diff and the real source before answering.
-            </div>
-          ) : (
-            reviewTurns.map((m, i) =>
-              m.role === "user" ? (
-                <div key={i} className="code-review-user">
-                  {m.text}
-                </div>
-              ) : (
-                <div
-                  key={i}
-                  className="chat-md code-review-agent"
-                  dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }}
-                />
-              ),
-            )
-          )}
-          {reviewing && <div className="code-review-thinking">reviewing…</div>}
-        </div>
-        <div className="code-review-input">
-          <textarea
-            value={reviewDraft}
-            onChange={(e) => setReviewDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void runReview();
-              }
-            }}
-            placeholder={
-              openPath ? `review ${openPath}, or ask a question…` : "review my latest changes…"
-            }
-            rows={2}
-            disabled={reviewing}
-          />
-          <button className="btn btn-primary btn-sm" onClick={runReview} disabled={reviewing}>
-            {reviewing ? "…" : "review ↵"}
-          </button>
-        </div>
       </div>
     </div>
   );

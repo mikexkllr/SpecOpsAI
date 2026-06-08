@@ -425,15 +425,15 @@ function CodingAgentSection({
 }): JSX.Element {
   const options: Array<{ id: CodingAgentId; label: string; description: string }> = [
     {
-      id: "claude-code",
-      label: "claude code",
-      description: "runs `claude --print` CLI for each task — must be installed globally",
-    },
-    {
       id: "deepagent",
       label: "custom agent (built-in)",
       description:
-        "uses the in-app deepagents Worker with your configured provider — no external CLI to install",
+        "uses the in-app deepagents Worker with your configured provider — no external CLI to install (default)",
+    },
+    {
+      id: "claude-code",
+      label: "claude code",
+      description: "runs `claude --print` CLI for each task — must be installed globally",
     },
     {
       id: "gh-copilot",
