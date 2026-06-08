@@ -1513,3 +1513,155 @@ code.inline {
 .status-text.danger   { color: var(--danger); }
 .status-text.info     { color: var(--info); }
 .status-text.muted    { color: var(--fg-2); }
+
+/* ---------- Code Studio (viewer / editor / reviewer) ---------- */
+
+.code-studio {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 380px;
+  min-height: 0;
+}
+
+/* file tree (viewer) */
+.code-tree {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-1);
+  border-right: 1px solid var(--border-subtle);
+}
+.code-tree-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.code-tree-body { flex: 1; overflow: auto; padding: 4px 0; }
+.code-tree-empty { padding: 12px; color: var(--fg-3); font-size: var(--fs-sm); }
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--fg-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  padding: 3px 8px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-row:hover { background: var(--bg-2); color: var(--fg-0); }
+.tree-file.active { background: var(--accent-soft); color: var(--accent-strong); }
+.tree-caret { width: 12px; color: var(--fg-2); flex-shrink: 0; }
+.tree-dir .tree-name { color: var(--fg-0); }
+.tree-name { overflow: hidden; text-overflow: ellipsis; }
+
+/* editor */
+.code-editor-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.code-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-1);
+}
+.code-editor-head .path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--fg-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.code-editor-head .actions { display: flex; gap: 6px; flex-shrink: 0; }
+.dirty-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.ro-badge {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 5px;
+}
+.code-editor-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-3);
+  font-size: var(--fs-sm);
+}
+
+/* reviewer */
+.code-review-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border-subtle);
+  background: var(--bg-1);
+}
+.code-review-head {
+  padding: 8px 12px;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.code-review-log { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.code-review-empty { color: var(--fg-3); font-size: var(--fs-sm); line-height: 1.5; }
+.code-review-user {
+  align-self: flex-end;
+  max-width: 92%;
+  background: var(--bg-3);
+  color: var(--fg-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.code-review-agent { font-size: var(--fs-sm); }
+.code-review-thinking { color: var(--fg-2); font-size: var(--fs-sm); }
+.code-review-input {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--border-subtle);
+  align-items: flex-end;
+}
+.code-review-input textarea {
+  flex: 1;
+  resize: none;
+  background: var(--bg-0);
+  color: var(--fg-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}

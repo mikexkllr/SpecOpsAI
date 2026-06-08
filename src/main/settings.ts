@@ -13,7 +13,13 @@ import {
 } from "../shared/api";
 
 const AGENT_MODES: AgentMode[] = ["yolo", "hitl"];
-const CODING_AGENTS: CodingAgentId[] = ["claude-code", "gh-copilot", "codex", "antigravity"];
+const CODING_AGENTS: CodingAgentId[] = [
+  "claude-code",
+  "deepagent",
+  "gh-copilot",
+  "codex",
+  "antigravity",
+];
 
 function settingsPath(): string {
   return path.join(app.getPath("userData"), "settings.json");

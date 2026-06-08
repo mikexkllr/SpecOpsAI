@@ -66,12 +66,14 @@ export function PhaseView({ phase, artifacts, onChange }: PhaseViewProps): JSX.E
           <>
             <EditorHeader
               title="technical stories"
-              subtitle="derived from user stories · each becomes a Worker task"
+              subtitle="derived from user stories · each becomes a Worker task · include code-snippet examples"
             />
             <MarkdownEditor
               value={artifacts.technicalStories}
               onChange={(v) => onChange({ technicalStories: v })}
-              placeholder="- [TS-1] implement …"
+              placeholder={
+                "## TS-1 · short title\n\nDescription + acceptance criteria.\n\n### Example\n```ts\n// key interface / stub the story builds toward\n```"
+              }
             />
           </>
         )}

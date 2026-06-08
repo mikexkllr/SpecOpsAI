@@ -86,7 +86,12 @@ export interface TechnicalStory {
   body: string;
 }
 
-export type CodingAgentId = "claude-code" | "gh-copilot" | "codex" | "antigravity";
+export type CodingAgentId =
+  | "claude-code"
+  | "deepagent"
+  | "gh-copilot"
+  | "codex"
+  | "antigravity";
 
 export type TaskStatus = "pending" | "in-progress" | "needs-attention" | "done";
 
@@ -252,6 +257,42 @@ export interface MergeResult {
   error?: string;
 }
 
+// --- Code Studio (interactive viewer / editor / reviewer) ------------------
+
+// One node in the project source tree, rooted at the project root. Paths are
+// posix-style and relative to the root (e.g. "src/main/worker.ts").
+export interface FileNode {
+  name: string;
+  path: string;
+  type: "file" | "dir";
+  children?: FileNode[];
+}
+
+export interface ProjectFileResult {
+  path: string;
+  content: string;
+  // true when the file looked binary or exceeded the read cap — content is then
+  // a short placeholder rather than the real bytes.
+  binary: boolean;
+  tooLarge: boolean;
+}
+
+export interface CodeReviewRequest {
+  specPath: string;
+  // The file the user is focused on in the editor, if any.
+  focusPath?: string;
+  // The user's question / what they want reviewed this turn.
+  instruction: string;
+  // Prior interactive-review turns, so the reviewer keeps context.
+  history: AgentTurn[];
+  artifacts: ArtifactFiles;
+}
+
+export interface CodeReviewResult {
+  markdown: string;
+  error?: string;
+}
+
 export type ProviderId = "anthropic" | "openai" | "google" | "ollama" | "bedrock";
 
 // How a provider exposes extended thinking / reasoning, and thus which control
@@ -402,6 +443,10 @@ export interface SpecOpsApi {
   resetWorker(specPath: string, storyId: string): Promise<WorkerStore>;
   stopWorker(specPath: string, storyId: string): Promise<void>;
   reviewTask(request: ReviewTaskRequest): Promise<ReviewTaskResult>;
+  readProjectTree(specPath: string): Promise<FileNode[]>;
+  readProjectFile(specPath: string, relPath: string): Promise<ProjectFileResult>;
+  writeProjectFile(specPath: string, relPath: string, content: string): Promise<void>;
+  reviewCode(request: CodeReviewRequest): Promise<CodeReviewResult>;
   startTestLoop(request: TestLoopRequest): Promise<void>;
   stopTestLoop(): Promise<void>;
   getTestLoopState(): Promise<TestLoopState>;

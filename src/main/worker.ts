@@ -406,25 +406,49 @@ export async function runWorkerTask(
   const ac = makeAbortController(req.specPath, req.story.id);
   try {
     const settings = await loadSettings();
+    // "deepagent" runs the built-in, in-app deepagents Worker (no external CLI);
+    // every other id shells out to a coding-agent CLI (claude-code, codex, …).
+    const usingDeepagent = settings.codingAgent === "deepagent";
 
-    const cliReply = await runCliAgent({
-      agentId: settings.codingAgent,
-      cwd: projectRoot(req.specPath),
-      storyId: req.story.id,
-      prompt: buildCliTaskPrompt(task, req.story, req.artifacts),
-      yolo: settings.agentMode === "yolo",
-      signal: ac.signal,
-    });
+    let implMessage: WorkerMessage;
+    if (usingDeepagent) {
+      emitWorkerStatus(req.story.id, "▶ deepagent (built-in) starting…\n");
+      const system = chatSystemPrompt(req.story, inProgressTasks, req.artifacts);
+      const history: ChatMsg[] = prev.messages.map((m) => ({
+        role: m.role === "user" ? "user" : "assistant",
+        content: m.text,
+      }));
+      const reply = await runStoryWorker(
+        req.specPath,
+        system,
+        history,
+        userTurnText,
+        ac.signal,
+      );
+      // Surface the reply in the live terminal pane too, so the deepagent path
+      // isn't silent while it works.
+      emitWorkerStatus(req.story.id, `\n${reply}\n`);
+      implMessage = { role: "agent", text: reply };
+    } else {
+      const cliReply = await runCliAgent({
+        agentId: settings.codingAgent,
+        cwd: projectRoot(req.specPath),
+        storyId: req.story.id,
+        prompt: buildCliTaskPrompt(task, req.story, req.artifacts),
+        yolo: settings.agentMode === "yolo",
+        signal: ac.signal,
+      });
+      implMessage = { role: "terminal", text: cliReply };
+    }
 
-    const terminalMessage: WorkerMessage = { role: "terminal", text: cliReply };
     const afterCli: WorkerState = {
       ...working,
-      messages: [...working.messages, terminalMessage],
+      messages: [...working.messages, implMessage],
     };
     store[req.story.id] = afterCli;
     await saveStore(req.specPath, store);
 
-    // Run reviewer deepagent on the CLI agent's changes
+    // Run reviewer deepagent on the coding agent's changes
     emitWorkerStatus(req.story.id, "\n▶ reviewing changes…\n");
     const reviewResult = await runReviewerAgent({
       specPath: req.specPath,

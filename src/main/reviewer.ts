@@ -2,14 +2,21 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import type * as DeepAgents from "deepagents";
-import type { ArtifactFiles, ReviewVerdict, TaskChunk, TechnicalStory } from "../shared/api";
+import type {
+  ArtifactFiles,
+  CodeReviewRequest,
+  CodeReviewResult,
+  ReviewVerdict,
+  TaskChunk,
+  TechnicalStory,
+} from "../shared/api";
 
 type BackendFactory = NonNullable<DeepAgents.CreateDeepAgentParams["backend"]>;
 import { buildChatModel } from "./models";
 import { getActiveProvider } from "./settings";
 import { loadDeps, createFsBackend } from "./deepagentsDeps";
 import { makeBrowserTools, closeBrowser } from "./browserTools";
-import { projectRoot, isAbortError } from "./utils";
+import { projectRoot, isAbortError, lastAssistantText } from "./utils";
 
 const execFileAsync = promisify(execFile);
 
@@ -158,5 +165,96 @@ export async function runReviewerAgent(opts: ReviewerOptions): Promise<ReviewRes
     return { verdict: "changes-requested", summary: `Review error: ${(err as Error).message}` };
   } finally {
     await closeBrowser();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Interactive code review (Code Studio).
+//
+// Unlike runReviewerAgent (which is task-bound and emits a structured verdict),
+// this is a free-form conversational reviewer: it reads the working-tree diff
+// and any file the user is focused on, then answers in markdown. The renderer
+// keeps a running history so the user can ask follow-ups ("now check error
+// handling", "is this thread-safe?").
+
+function codeReviewSystemPrompt(req: CodeReviewRequest): string {
+  const sections: string[] = [
+    "You are a senior engineer doing an INTERACTIVE code review inside an IDE.",
+    "The developer will ask you to review code or answer questions about it. Be concrete and specific — cite file paths and, where useful, short code excerpts.",
+    "",
+    "## How to work",
+    "- Use `git_diff` to see uncommitted changes in the working tree.",
+    "- Use your filesystem tools (`read_file`, `glob`, `grep`, `ls`) to read the actual source — never guess at code you can read.",
+    "- When you spot a real issue, explain WHY it's a problem and suggest a concrete fix (a snippet or an edit). Distinguish blocking bugs from nits.",
+    "- If the code looks good, say so plainly. Don't invent problems.",
+    "- Reply in markdown. Keep it focused on what the developer asked; don't dump a full audit unless asked.",
+  ];
+  if (req.focusPath) {
+    sections.push(
+      "",
+      `## Focused file`,
+      `The developer is currently looking at \`${req.focusPath}\`. Prioritize it unless they ask otherwise.`,
+    );
+  }
+  if (req.artifacts.spec.trim()) {
+    sections.push("", "## Spec (for alignment)", req.artifacts.spec.trim());
+  }
+  if (req.artifacts.technicalStories.trim()) {
+    sections.push("", "## Technical Stories", req.artifacts.technicalStories.trim());
+  }
+  return sections.join("\n");
+}
+
+export async function runCodeReview(req: CodeReviewRequest): Promise<CodeReviewResult> {
+  const root = projectRoot(req.specPath);
+  try {
+    const cfg = await getActiveProvider();
+    const { deepagents, messages: M, tools: T } = await loadDeps();
+    const model = await buildChatModel(cfg);
+
+    const gitDiffTool = T.tool(
+      async () => {
+        try {
+          const { stdout } = await execFileAsync("git", ["diff", "HEAD"], { cwd: root });
+          if (stdout.trim()) return stdout.trim();
+          const { stdout: untracked } = await execFileAsync(
+            "git",
+            ["status", "--porcelain"],
+            { cwd: root },
+          );
+          return untracked.trim() || "(working tree clean — no uncommitted changes)";
+        } catch (err) {
+          return `Could not run git diff: ${(err as Error).message}`;
+        }
+      },
+      {
+        name: "git_diff",
+        description:
+          "Return the diff of uncommitted changes in the working tree. Call this to see what the developer just changed.",
+        schema: z.object({}),
+      },
+    );
+
+    const backend = await buildReviewerBackend(root);
+    const agent = deepagents.createDeepAgent({
+      model,
+      systemPrompt: codeReviewSystemPrompt(req),
+      tools: [gitDiffTool],
+      backend,
+    });
+
+    const lcMessages = [
+      ...req.history.map((m) =>
+        m.role === "user" ? new M.HumanMessage(m.text) : new M.AIMessage(m.text),
+      ),
+      new M.HumanMessage(req.instruction),
+    ];
+    const result = await agent.invoke({ messages: lcMessages });
+    return { markdown: lastAssistantText(result) || "(no response)" };
+  } catch (err) {
+    return {
+      markdown: "",
+      error: isAbortError(err) ? "Review stopped." : (err as Error).message,
+    };
   }
 }

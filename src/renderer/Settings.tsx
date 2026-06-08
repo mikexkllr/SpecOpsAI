@@ -430,6 +430,12 @@ function CodingAgentSection({
       description: "runs `claude --print` CLI for each task — must be installed globally",
     },
     {
+      id: "deepagent",
+      label: "custom agent (built-in)",
+      description:
+        "uses the in-app deepagents Worker with your configured provider — no external CLI to install",
+    },
+    {
       id: "gh-copilot",
       label: "github copilot",
       description: "runs `gh copilot suggest` CLI — requires GitHub Copilot subscription",
@@ -449,7 +455,7 @@ function CodingAgentSection({
     <div className="divider-t" style={{ paddingTop: 18 }}>
       <div className="section-title">coding agent</div>
       <div className="section-subtitle">
-        CLI agent used to execute implementation tasks
+        agent used to execute implementation tasks — the built-in custom agent, or an external CLI
       </div>
       <div className="flex-col" style={{ gap: 8, marginTop: 12 }}>
         {options.map((opt) => {

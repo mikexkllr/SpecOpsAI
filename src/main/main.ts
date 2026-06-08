@@ -5,6 +5,7 @@ import type {
   AppSettings,
   ArtifactFiles,
   ChatHistory,
+  CodeReviewRequest,
   GenerateIntegrationTestsRequest,
   GenerateUnitTestsRequest,
   ReviewTaskRequest,
@@ -47,7 +48,8 @@ import {
   stopTestLoop,
 } from "./test-loop";
 import { onCliChunk } from "./cliAgent";
-import { runReviewerAgent } from "./reviewer";
+import { runReviewerAgent, runCodeReview } from "./reviewer";
+import { readProjectTree, readProjectFile, writeProjectFile } from "./codeFiles";
 
 const isDev = !app.isPackaged;
 
@@ -178,6 +180,19 @@ function registerIpc(): void {
       devServerUrl: settings.devServerUrl,
     });
   });
+
+  ipcMain.handle("code:tree", (_e, specPath: string) => readProjectTree(specPath));
+  ipcMain.handle("code:read", (_e, specPath: string, relPath: string) =>
+    readProjectFile(specPath, relPath),
+  );
+  ipcMain.handle(
+    "code:write",
+    (_e, specPath: string, relPath: string, content: string) =>
+      writeProjectFile(specPath, relPath, content),
+  );
+  ipcMain.handle("code:review", (_e, request: CodeReviewRequest) =>
+    runCodeReview(request),
+  );
 
   ipcMain.handle("testloop:start", (_e, request: TestLoopRequest) =>
     startTestLoop(request),

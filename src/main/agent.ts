@@ -66,6 +66,8 @@ const PHASE_CONFIG: Record<Phase, PhaseConfig> = {
       "Derive **Technical Stories** from the user stories.",
       "Each story: an ID (`TS-1`, `TS-2`…), a one-line title, a short description, and acceptance criteria.",
       "These will each become a Worker task — keep them small and self-contained.",
+      "**Include an `### Example` section with a fenced code snippet** for each story — the key interface/type signature, function stub, schema, or config the story introduces (grounded in the real codebase: read the relevant files first, match the existing language and patterns).",
+      "Keep snippets short and illustrative (the shape to build toward), not a full implementation. Use a language tag on the fence (```ts, ```py, …).",
     ].join(" "),
   },
   implementation: {

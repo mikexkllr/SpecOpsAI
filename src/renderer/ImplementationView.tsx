@@ -20,6 +20,7 @@ import { StoryList } from "./components/StoryList";
 import { StoryWorkspace } from "./components/StoryWorkspace";
 import { IntegrationTestsPanel } from "./components/IntegrationTestsPanel";
 import { TestLoopPanel } from "./components/TestLoopPanel";
+import { CodeStudio } from "./components/CodeStudio";
 
 interface ImplementationViewProps {
   specPath: string;
@@ -28,7 +29,7 @@ interface ImplementationViewProps {
   onCodeChange: (code: string) => void;
 }
 
-type Tab = "stories" | "integration" | "testloop" | "code";
+type Tab = "stories" | "codestudio" | "integration" | "testloop" | "code";
 
 function toApiArtifacts(a: Artifacts): ArtifactFiles {
   return {
@@ -347,6 +348,15 @@ export function ImplementationView({
     }
   }
 
+  if (tab === "codestudio") {
+    return (
+      <div className="flex-col flex-1">
+        <Tabs tab={tab} onChange={setTab} />
+        <CodeStudio specPath={specPath} artifacts={artifacts} />
+      </div>
+    );
+  }
+
   if (tab === "code") {
     return (
       <div className="flex-col flex-1">
@@ -450,6 +460,7 @@ export function ImplementationView({
 function Tabs({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }): JSX.Element {
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: "stories", label: "workers" },
+    { id: "codestudio", label: "code" },
     { id: "integration", label: "integration tests" },
     { id: "testloop", label: "test loop" },
     { id: "code", label: "code notes" },

@@ -41,6 +41,12 @@ const api: SpecOpsApi = {
   stopWorker: (specPath, storyId) =>
     ipcRenderer.invoke("worker:stop", specPath, storyId),
   reviewTask: (request) => ipcRenderer.invoke("worker:review-task", request),
+  readProjectTree: (specPath) => ipcRenderer.invoke("code:tree", specPath),
+  readProjectFile: (specPath, relPath) =>
+    ipcRenderer.invoke("code:read", specPath, relPath),
+  writeProjectFile: (specPath, relPath, content) =>
+    ipcRenderer.invoke("code:write", specPath, relPath, content),
+  reviewCode: (request) => ipcRenderer.invoke("code:review", request),
   generateUnitTests: (request) =>
     ipcRenderer.invoke("worker:generate-unit-tests", request),
   generateIntegrationTests: (request) =>
