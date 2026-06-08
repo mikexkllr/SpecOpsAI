@@ -21,6 +21,16 @@ harness, against any of four configurable model providers
 
 ---
 
+## Demo
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=f36oq2NN3-Q">
+    <img src="https://img.youtube.com/vi/f36oq2NN3-Q/maxresdefault.jpg" alt="SpecOps AI demo video" width="780"/>
+  </a>
+</p>
+
+---
+
 ## Screenshots
 
 <p align="center">
