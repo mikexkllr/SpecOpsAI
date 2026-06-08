@@ -14,7 +14,7 @@ import type {
 } from "../shared/api";
 import { buildChatModel } from "./models";
 import { getActiveProvider } from "./settings";
-import { loadDeps } from "./deepagentsDeps";
+import { loadDeps, createFsBackend } from "./deepagentsDeps";
 import { projectRoot, lastAssistantText, isAbortError } from "./utils";
 
 const DEFAULT_MAX_ITERATIONS = 5;
@@ -228,7 +228,7 @@ async function runFixAgent(
   const { deepagents, messages: M, tools: T } = await loadDeps();
   const { tool } = T;
   const { HumanMessage } = M;
-  const { createDeepAgent, CompositeBackend, FilesystemBackend, StateBackend } = deepagents;
+  const { createDeepAgent, CompositeBackend, StateBackend } = deepagents;
 
   let captured: TestLoopVerdict = "fix-code";
 
@@ -250,7 +250,7 @@ async function runFixAgent(
 
   const cfg = await getActiveProvider();
   const model = await buildChatModel(cfg);
-  const fsBackend = new FilesystemBackend({
+  const fsBackend = createFsBackend(deepagents, {
     rootDir: projectRoot(specPath),
     virtualMode: true,
   });

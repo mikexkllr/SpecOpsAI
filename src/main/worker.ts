@@ -27,7 +27,7 @@ import {
   workerSubagents,
   testGenSubagents,
 } from "./workerSubagents";
-import { loadDeps } from "./deepagentsDeps";
+import { loadDeps, createFsBackend } from "./deepagentsDeps";
 import { runCliAgent, buildCliTaskPrompt, emitWorkerStatus } from "./cliAgent";
 import { runReviewerAgent } from "./reviewer";
 import { projectRoot, lastAssistantText, isAbortError } from "./utils";
@@ -76,8 +76,8 @@ async function buildBackend(specPath: string): Promise<BackendFactory> {
   // (/conversation_history, /large_tool_results) into an in-memory StateBackend
   // so they never litter the project root.
   const { deepagents } = await loadDeps();
-  const { CompositeBackend, FilesystemBackend, StateBackend } = deepagents;
-  const fsBackend = new FilesystemBackend({
+  const { CompositeBackend, StateBackend } = deepagents;
+  const fsBackend = createFsBackend(deepagents, {
     rootDir: projectRoot(specPath),
     virtualMode: true,
   });

@@ -12,7 +12,7 @@ import type {
 import { getActiveProvider } from "./settings";
 import { buildChatModel } from "./models";
 import { workerSubagents } from "./workerSubagents";
-import { loadDeps } from "./deepagentsDeps";
+import { loadDeps, createFsBackend } from "./deepagentsDeps";
 import { projectRoot, lastAssistantText } from "./utils";
 
 // --- live event stream ----------------------------------------------------
@@ -318,10 +318,10 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurnResu
     const cfg = await getActiveProvider();
     const model = await buildChatModel(cfg);
     const { deepagents } = await loadDeps();
-    const { createDeepAgent, CompositeBackend, FilesystemBackend, StateBackend } = deepagents;
+    const { createDeepAgent, CompositeBackend, StateBackend } = deepagents;
     const lcMessages = await toLcMessages(messages);
 
-    const fsBackend = new FilesystemBackend({
+    const fsBackend = createFsBackend(deepagents, {
       rootDir: projectRoot(req.specPath),
       virtualMode: true,
     });

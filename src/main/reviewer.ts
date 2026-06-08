@@ -7,7 +7,7 @@ import type { ArtifactFiles, ReviewVerdict, TaskChunk, TechnicalStory } from "..
 type BackendFactory = NonNullable<DeepAgents.CreateDeepAgentParams["backend"]>;
 import { buildChatModel } from "./models";
 import { getActiveProvider } from "./settings";
-import { loadDeps } from "./deepagentsDeps";
+import { loadDeps, createFsBackend } from "./deepagentsDeps";
 import { makeBrowserTools, closeBrowser } from "./browserTools";
 import { projectRoot, isAbortError } from "./utils";
 
@@ -71,8 +71,8 @@ function reviewSystemPrompt(
 
 async function buildReviewerBackend(root: string): Promise<BackendFactory> {
   const { deepagents } = await loadDeps();
-  const { CompositeBackend, FilesystemBackend, StateBackend } = deepagents;
-  const fsBackend = new FilesystemBackend({ rootDir: root, virtualMode: true });
+  const { CompositeBackend, StateBackend } = deepagents;
+  const fsBackend = createFsBackend(deepagents, { rootDir: root, virtualMode: true });
   return (runtime) =>
     new CompositeBackend(fsBackend, {
       "/conversation_history": new StateBackend(runtime),
