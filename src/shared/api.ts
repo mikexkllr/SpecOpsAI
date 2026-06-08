@@ -326,6 +326,21 @@ export interface CodeReviewResult {
   error?: string;
 }
 
+// The coding agent embedded in the code editor: it edits files for real and can
+// mark technical-story tasks implemented.
+export interface EditorAgentRequest {
+  specPath: string;
+  artifacts: ArtifactFiles;
+  history: AgentTurn[];
+  message: string;
+}
+
+export interface EditorAgentResult {
+  reply: string;
+  markedImplemented: MarkedTask[];
+  error?: string;
+}
+
 export type ProviderId = "anthropic" | "openai" | "google" | "ollama" | "bedrock";
 
 // How a provider exposes extended thinking / reasoning, and thus which control
@@ -481,6 +496,7 @@ export interface SpecOpsApi {
   writeProjectFile(specPath: string, relPath: string, content: string): Promise<void>;
   generateCodeReview(request: GenerateCodeReviewRequest): Promise<CodeReviewReport>;
   reviewCode(request: CodeReviewRequest): Promise<CodeReviewResult>;
+  runEditorAgent(request: EditorAgentRequest): Promise<EditorAgentResult>;
   startTestLoop(request: TestLoopRequest): Promise<void>;
   stopTestLoop(): Promise<void>;
   getTestLoopState(): Promise<TestLoopState>;

@@ -6,6 +6,7 @@ import type {
   ArtifactFiles,
   ChatHistory,
   CodeReviewRequest,
+  EditorAgentRequest,
   GenerateCodeReviewRequest,
   GenerateIntegrationTestsRequest,
   GenerateUnitTestsRequest,
@@ -51,6 +52,7 @@ import {
 import { onCliChunk } from "./cliAgent";
 import { runReviewerAgent, runCodeReview, generateCodeReview } from "./reviewer";
 import { readProjectTree, readProjectFile, writeProjectFile } from "./codeFiles";
+import { runEditorAgent } from "./editorAgent";
 
 const isDev = !app.isPackaged;
 
@@ -229,6 +231,9 @@ function registerIpc(): void {
   );
   ipcMain.handle("code:review", (_e, request: CodeReviewRequest) =>
     runCodeReview(request),
+  );
+  ipcMain.handle("code:editor-agent", (_e, request: EditorAgentRequest) =>
+    runEditorAgent(request),
   );
 
   ipcMain.handle("testloop:start", (_e, request: TestLoopRequest) =>

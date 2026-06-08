@@ -48,6 +48,7 @@ const api: SpecOpsApi = {
     ipcRenderer.invoke("code:write", specPath, relPath, content),
   generateCodeReview: (request) => ipcRenderer.invoke("code:generate-review", request),
   reviewCode: (request) => ipcRenderer.invoke("code:review", request),
+  runEditorAgent: (request) => ipcRenderer.invoke("code:editor-agent", request),
   generateUnitTests: (request) =>
     ipcRenderer.invoke("worker:generate-unit-tests", request),
   generateIntegrationTests: (request) =>

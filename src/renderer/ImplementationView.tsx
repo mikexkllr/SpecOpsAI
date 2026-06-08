@@ -376,7 +376,7 @@ export function ImplementationView({
     return (
       <div className="flex-col flex-1">
         <Tabs tab={tab} onChange={setTab} />
-        <CodeEditor specPath={specPath} openRequest={editorRequest} />
+        <CodeEditor specPath={specPath} artifacts={artifacts} openRequest={editorRequest} />
       </div>
     );
   }

@@ -1516,13 +1516,36 @@ code.inline {
 
 /* ---------- Code editor & reviewer ---------- */
 
-/* code editor view: file tree + syntax-highlighted editor */
+/* code editor view: file tree + syntax-highlighted editor + coding agent */
 .code-editor-view {
   flex: 1;
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr) 360px;
   min-height: 0;
 }
+
+/* embedded coding agent panel */
+.code-agent {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border-subtle);
+  background: var(--bg-1);
+}
+.code-agent-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.code-agent-sub { text-transform: none; letter-spacing: 0; color: var(--fg-3); }
+.code-agent .marked-tasks { padding: 8px 12px 0; margin-bottom: 0; }
 
 /* code reviewer view: GH-style report + Q&A chat */
 .code-reviewer-view {

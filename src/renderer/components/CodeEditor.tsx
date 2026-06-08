@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Editor from "react-simple-code-editor";
 import Prism from "prismjs";
 // Order matters: tsx extends jsx + typescript, so its deps load first. markup,
@@ -12,7 +12,9 @@ import "prismjs/components/prism-python";
 import "prismjs/components/prism-bash";
 import "prismjs/components/prism-yaml";
 import "prismjs/components/prism-markdown";
-import type { FileNode } from "../../shared/api";
+import type { AgentTurn, ArtifactFiles, FileNode, MarkedTask } from "../../shared/api";
+import type { Artifacts } from "../phases";
+import { renderMarkdown } from "../markdown";
 
 // A request from another view (e.g. the reviewer) to open a specific file. The
 // `id` makes repeat requests for the same path re-trigger the open effect.
@@ -23,7 +25,17 @@ export interface OpenFileRequest {
 
 interface CodeEditorProps {
   specPath: string;
+  artifacts: Artifacts;
   openRequest?: OpenFileRequest | null;
+}
+
+function toApiArtifacts(a: Artifacts): ArtifactFiles {
+  return {
+    spec: a.spec,
+    userStories: a.userStories,
+    technicalStories: a.technicalStories,
+    code: a.code,
+  };
 }
 
 const LANG_BY_EXT: Record<string, string> = {
@@ -70,7 +82,7 @@ function highlight(code: string, path: string): string {
   }
 }
 
-export function CodeEditor({ specPath, openRequest }: CodeEditorProps): JSX.Element {
+export function CodeEditor({ specPath, artifacts, openRequest }: CodeEditorProps): JSX.Element {
   const [tree, setTree] = useState<FileNode[] | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [openPath, setOpenPath] = useState<string | null>(null);
@@ -80,12 +92,24 @@ export function CodeEditor({ specPath, openRequest }: CodeEditorProps): JSX.Elem
   const [readOnly, setReadOnly] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
+  const [agentDraft, setAgentDraft] = useState("");
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [marked, setMarked] = useState<MarkedTask[]>([]);
+  const agentScrollRef = useRef<HTMLDivElement>(null);
+  // Mirror of openPath/dirty for use inside async agent callbacks without stale
+  // closures, so post-run reload reads the latest editor state.
+  const openPathRef = useRef<string | null>(null);
+  const dirtyRef = useRef(false);
+
   useEffect(() => {
     let cancelled = false;
     setTree(null);
     setOpenPath(null);
     setContent("");
     setSavedContent("");
+    setAgentTurns([]);
+    setMarked([]);
     window.specops.readProjectTree(specPath).then((t) => {
       if (!cancelled) setTree(t);
     });
@@ -101,6 +125,15 @@ export function CodeEditor({ specPath, openRequest }: CodeEditorProps): JSX.Elem
   }, [openRequest?.id]);
 
   const dirty = openPath !== null && !readOnly && content !== savedContent;
+
+  useEffect(() => {
+    openPathRef.current = openPath;
+    dirtyRef.current = dirty;
+  }, [openPath, dirty]);
+
+  useEffect(() => {
+    agentScrollRef.current?.scrollTo({ top: agentScrollRef.current.scrollHeight });
+  }, [agentTurns.length, agentBusy]);
 
   async function openFile(path: string): Promise<void> {
     setLoadingFile(true);
@@ -142,6 +175,43 @@ export function CodeEditor({ specPath, openRequest }: CodeEditorProps): JSX.Elem
       else next.add(path);
       return next;
     });
+  }
+
+  async function runAgent(): Promise<void> {
+    if (agentBusy) return;
+    const message = agentDraft.trim();
+    if (!message) return;
+    setAgentDraft("");
+    const history = agentTurns;
+    setAgentTurns((t) => [...t, { role: "user", text: message }]);
+    setAgentBusy(true);
+    try {
+      const res = await window.specops.runEditorAgent({
+        specPath,
+        artifacts: toApiArtifacts(artifacts),
+        history,
+        message,
+      });
+      setAgentTurns((t) => [
+        ...t,
+        { role: "agent", text: res.error ? `Error: ${res.error}` : res.reply },
+      ]);
+      if (res.markedImplemented.length) {
+        setMarked((prev) => {
+          const seen = new Set(prev.map((m) => `${m.storyId}::${m.taskId}`));
+          return [...prev, ...res.markedImplemented.filter((m) => !seen.has(`${m.storyId}::${m.taskId}`))];
+        });
+      }
+      // The agent edits files on disk — refresh the tree, and reload the open
+      // file so its edits show (unless the user has unsaved local changes).
+      await refreshTree();
+      const cur = openPathRef.current;
+      if (cur && !dirtyRef.current) await openFile(cur);
+    } catch (err) {
+      setAgentTurns((t) => [...t, { role: "agent", text: `Error: ${(err as Error).message}` }]);
+    } finally {
+      setAgentBusy(false);
+    }
   }
 
   return (
@@ -224,6 +294,66 @@ export function CodeEditor({ specPath, openRequest }: CodeEditorProps): JSX.Elem
             select a file from the explorer to view and edit it
           </div>
         )}
+      </div>
+
+      {/* embedded coding agent — implements changes & marks tasks done */}
+      <div className="code-agent">
+        <div className="code-agent-head">
+          <span>coding agent</span>
+          <span className="code-agent-sub">edits files · marks tasks done</span>
+        </div>
+        {marked.length > 0 && (
+          <div className="marked-tasks">
+            <span className="marked-label">marked done</span>
+            {marked.map((m) => (
+              <span key={`${m.storyId}-${m.taskId}`} className="marked-chip" title={m.title}>
+                ✓ {m.taskId}
+              </span>
+            ))}
+          </div>
+        )}
+        <div ref={agentScrollRef} className="code-review-log">
+          {agentTurns.length === 0 && !agentBusy ? (
+            <div className="code-review-empty">
+              Ask the agent to implement a technical-story task or user story — it edits the
+              real files and marks tasks done. e.g. &ldquo;implement TS-2&rdquo;, &ldquo;wire
+              the save button to the API&rdquo;, &ldquo;add validation to the login form&rdquo;.
+            </div>
+          ) : (
+            agentTurns.map((m, i) =>
+              m.role === "user" ? (
+                <div key={i} className="code-review-user">
+                  {m.text}
+                </div>
+              ) : (
+                <div
+                  key={i}
+                  className="chat-md code-review-agent"
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }}
+                />
+              ),
+            )
+          )}
+          {agentBusy && <div className="code-review-thinking">working…</div>}
+        </div>
+        <div className="code-review-input">
+          <textarea
+            value={agentDraft}
+            onChange={(e) => setAgentDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void runAgent();
+              }
+            }}
+            placeholder={agentBusy ? "working…" : "tell the agent what to implement…"}
+            rows={2}
+            disabled={agentBusy}
+          />
+          <button className="btn btn-primary btn-sm" onClick={runAgent} disabled={agentBusy}>
+            {agentBusy ? "…" : "send ↵"}
+          </button>
+        </div>
       </div>
     </div>
   );
