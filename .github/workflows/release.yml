@@ -1,0 +1,62 @@
+name: Release
+
+# Build cross-platform installers and publish them to a GitHub Release that the
+# in-app auto-updater (electron-updater) can pull from.
+#
+#   • Push a tag like v0.1.0  → builds Windows/macOS/Linux installers and uploads
+#     them (plus the latest*.yml update metadata) to a DRAFT release "v0.1.0".
+#   • Review the draft on GitHub, then hit "Publish release" to ship it. Only
+#     published, non-prerelease releases are offered to users as updates.
+#
+# Run "Release" manually (workflow_dispatch) to dry-build the same artifacts.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# electron-builder needs write access to create/upload the GitHub Release.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest # .dmg + .zip (x64 + arm64)
+          - os: windows-latest # .exe (NSIS installer)
+          - os: ubuntu-latest # .AppImage + .deb + .rpm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # fpm builds the .rpm package and needs the rpm toolchain present.
+      - name: Install Linux packaging tools
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Install dependencies
+        # The app launches the system Chrome via Playwright, so the bundled
+        # browser download is unnecessary in CI.
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: npm ci
+
+      - name: Build and publish installers
+        env:
+          # electron-builder uploads artifacts to the GitHub Release with this.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:publish

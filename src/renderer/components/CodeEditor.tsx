@@ -12,7 +12,13 @@ import "prismjs/components/prism-python";
 import "prismjs/components/prism-bash";
 import "prismjs/components/prism-yaml";
 import "prismjs/components/prism-markdown";
-import type { AgentTurn, ArtifactFiles, FileNode, MarkedTask } from "../../shared/api";
+import type {
+  AgentTurn,
+  ArtifactFiles,
+  FileNode,
+  MarkedStory,
+  TechnicalStory,
+} from "../../shared/api";
 import type { Artifacts } from "../phases";
 import { renderMarkdown } from "../markdown";
 
@@ -26,6 +32,7 @@ export interface OpenFileRequest {
 interface CodeEditorProps {
   specPath: string;
   artifacts: Artifacts;
+  stories: TechnicalStory[];
   openRequest?: OpenFileRequest | null;
 }
 
@@ -82,7 +89,12 @@ function highlight(code: string, path: string): string {
   }
 }
 
-export function CodeEditor({ specPath, artifacts, openRequest }: CodeEditorProps): JSX.Element {
+export function CodeEditor({
+  specPath,
+  artifacts,
+  stories,
+  openRequest,
+}: CodeEditorProps): JSX.Element {
   const [tree, setTree] = useState<FileNode[] | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [openPath, setOpenPath] = useState<string | null>(null);
@@ -95,7 +107,7 @@ export function CodeEditor({ specPath, artifacts, openRequest }: CodeEditorProps
   const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
   const [agentDraft, setAgentDraft] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
-  const [marked, setMarked] = useState<MarkedTask[]>([]);
+  const [marked, setMarked] = useState<MarkedStory[]>([]);
   const agentScrollRef = useRef<HTMLDivElement>(null);
   // Mirror of openPath/dirty for use inside async agent callbacks without stale
   // closures, so post-run reload reads the latest editor state.
@@ -189,6 +201,7 @@ export function CodeEditor({ specPath, artifacts, openRequest }: CodeEditorProps
       const res = await window.specops.runEditorAgent({
         specPath,
         artifacts: toApiArtifacts(artifacts),
+        stories,
         history,
         message,
       });
@@ -198,8 +211,8 @@ export function CodeEditor({ specPath, artifacts, openRequest }: CodeEditorProps
       ]);
       if (res.markedImplemented.length) {
         setMarked((prev) => {
-          const seen = new Set(prev.map((m) => `${m.storyId}::${m.taskId}`));
-          return [...prev, ...res.markedImplemented.filter((m) => !seen.has(`${m.storyId}::${m.taskId}`))];
+          const seen = new Set(prev.map((m) => m.storyId));
+          return [...prev, ...res.markedImplemented.filter((m) => !seen.has(m.storyId))];
         });
       }
       // The agent edits files on disk — refresh the tree, and reload the open
@@ -306,8 +319,8 @@ export function CodeEditor({ specPath, artifacts, openRequest }: CodeEditorProps
           <div className="marked-tasks">
             <span className="marked-label">marked done</span>
             {marked.map((m) => (
-              <span key={`${m.storyId}-${m.taskId}`} className="marked-chip" title={m.title}>
-                ✓ {m.taskId}
+              <span key={m.storyId} className="marked-chip" title={m.title}>
+                ✓ {m.storyId}
               </span>
             ))}
           </div>
@@ -350,9 +363,19 @@ export function CodeEditor({ specPath, artifacts, openRequest }: CodeEditorProps
             rows={2}
             disabled={agentBusy}
           />
-          <button className="btn btn-primary btn-sm" onClick={runAgent} disabled={agentBusy}>
-            {agentBusy ? "…" : "send ↵"}
-          </button>
+          {agentBusy ? (
+            <button
+              className="btn btn-danger btn-sm"
+              onClick={() => window.specops.stopEditorAgent(specPath)}
+              title="abort the running agent"
+            >
+              stop
+            </button>
+          ) : (
+            <button className="btn btn-primary btn-sm" onClick={runAgent}>
+              send ↵
+            </button>
+          )}
         </div>
       </div>
     </div>

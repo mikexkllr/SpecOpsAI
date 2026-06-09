@@ -8,6 +8,7 @@ import {
   type ProviderDescriptor,
   type ProviderId,
   type ThinkingConfig,
+  type UpdateStatus,
 } from "../shared/api";
 
 interface Props {
@@ -141,6 +142,10 @@ export function Settings({ onClose, onSaved }: Props): JSX.Element {
             <ReviewerSection
               devServerUrl={settings.devServerUrl ?? ""}
               onChange={(devServerUrl) => setSettings({ ...settings, devServerUrl: devServerUrl || undefined })}
+            />
+            <UpdatesSection
+              autoUpdate={settings.autoUpdate !== false}
+              onChange={(autoUpdate) => setSettings({ ...settings, autoUpdate })}
             />
           </div>
         </div>
@@ -500,6 +505,117 @@ function ReviewerSection({
       </div>
     </div>
   );
+}
+
+function UpdatesSection({
+  autoUpdate,
+  onChange,
+}: {
+  autoUpdate: boolean;
+  onChange: (v: boolean) => void;
+}): JSX.Element {
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+
+  useEffect(() => {
+    window.specops.getUpdateStatus().then(setStatus);
+    return window.specops.onUpdateStatus(setStatus);
+  }, []);
+
+  const state = status?.state ?? "idle";
+  const busy = state === "checking" || state === "downloading";
+  const disabled = state === "disabled";
+
+  const options: Array<{ id: boolean; label: string; description: string }> = [
+    {
+      id: true,
+      label: "automatic",
+      description: "check GitHub on launch and download new versions in the background",
+    },
+    {
+      id: false,
+      label: "manual",
+      description: "only check when you press the button below",
+    },
+  ];
+
+  return (
+    <div className="divider-t" style={{ paddingTop: 18 }}>
+      <div className="section-title">updates</div>
+      <div className="section-subtitle">
+        SpecOps updates itself from GitHub Releases — current version v{status?.currentVersion ?? "—"}
+      </div>
+
+      <div className="flex-col" style={{ gap: 8, marginTop: 12 }}>
+        {options.map((opt) => (
+          <button
+            key={String(opt.id)}
+            onClick={() => onChange(opt.id)}
+            className={`option-card${opt.id === autoUpdate ? " active" : ""}`}
+          >
+            <div className="opt-title">{opt.label}</div>
+            <div className="opt-desc">{opt.description}</div>
+          </button>
+        ))}
+      </div>
+
+      <div className="section-subtitle" style={{ marginTop: 12 }}>
+        {updateStatusLabel(status)}
+      </div>
+
+      {state === "downloading" && status?.progressPercent !== undefined && (
+        <div className="section-subtitle" style={{ marginTop: 4 }}>
+          {status.progressPercent}%
+        </div>
+      )}
+
+      <div className="flex-row" style={{ gap: 8, marginTop: 12 }}>
+        <button
+          className="btn"
+          disabled={busy || disabled}
+          onClick={() => window.specops.checkForUpdates()}
+        >
+          {state === "checking" ? "checking…" : "check for updates"}
+        </button>
+
+        {state === "available" && (
+          <button className="btn btn-primary" onClick={() => window.specops.downloadUpdate()}>
+            download v{status?.newVersion}
+          </button>
+        )}
+
+        {state === "downloaded" && (
+          <button
+            className="btn btn-primary"
+            onClick={() => window.specops.quitAndInstallUpdate()}
+          >
+            restart &amp; install v{status?.newVersion}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function updateStatusLabel(status: UpdateStatus | null): string {
+  if (!status) return "";
+  switch (status.state) {
+    case "disabled":
+      return "auto-update is unavailable in development builds";
+    case "checking":
+      return "checking GitHub for a newer version…";
+    case "available":
+      return `version ${status.newVersion} is available`;
+    case "downloading":
+      return `downloading version ${status.newVersion ?? ""}…`;
+    case "downloaded":
+      return `version ${status.newVersion} is ready — restart to install`;
+    case "not-available":
+      return "you're on the latest version";
+    case "error":
+      return `update check failed: ${status.error ?? "unknown error"}`;
+    default:
+      return "";
+  }
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {

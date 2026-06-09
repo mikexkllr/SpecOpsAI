@@ -2,6 +2,7 @@ import React from "react";
 import type { TechnicalStory, WorkerStore } from "../../shared/api";
 
 function progressLabel(state: NonNullable<WorkerStore[string]>): string {
+  if (state.status === "done") return "✓ done";
   if (state.status === "decomposing") return "decomposing…";
   if (state.status === "running") return "Worker thinking…";
   if (state.tasks.length === 0) return "no tasks yet";

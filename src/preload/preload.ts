@@ -4,6 +4,7 @@ import type {
   ArtifactFiles,
   SpecOpsApi,
   TestLoopState,
+  UpdateStatus,
 } from "../shared/api";
 
 const api: SpecOpsApi = {
@@ -49,6 +50,7 @@ const api: SpecOpsApi = {
   generateCodeReview: (request) => ipcRenderer.invoke("code:generate-review", request),
   reviewCode: (request) => ipcRenderer.invoke("code:review", request),
   runEditorAgent: (request) => ipcRenderer.invoke("code:editor-agent", request),
+  stopEditorAgent: (specPath) => ipcRenderer.invoke("code:editor-agent-stop", specPath),
   generateUnitTests: (request) =>
     ipcRenderer.invoke("worker:generate-unit-tests", request),
   generateIntegrationTests: (request) =>
@@ -68,6 +70,18 @@ const api: SpecOpsApi = {
   },
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
+  getUpdateStatus: () => ipcRenderer.invoke("update:get-status"),
+  checkForUpdates: () => ipcRenderer.invoke("update:check"),
+  downloadUpdate: () => ipcRenderer.invoke("update:download"),
+  quitAndInstallUpdate: () => ipcRenderer.invoke("update:quit-and-install"),
+  onUpdateStatus: (callback: (status: UpdateStatus) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: UpdateStatus) =>
+      callback(status);
+    ipcRenderer.on("update:status", handler);
+    return () => {
+      ipcRenderer.removeListener("update:status", handler);
+    };
+  },
   minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
   toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("window:close"),

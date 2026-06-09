@@ -52,7 +52,16 @@ import {
 import { onCliChunk } from "./cliAgent";
 import { runReviewerAgent, runCodeReview, generateCodeReview } from "./reviewer";
 import { readProjectTree, readProjectFile, writeProjectFile } from "./codeFiles";
-import { runEditorAgent } from "./editorAgent";
+import { runEditorAgent, stopEditorAgent } from "./editorAgent";
+import {
+  checkForUpdates,
+  downloadUpdate,
+  getUpdateStatus,
+  initAutoUpdater,
+  onUpdateStatus,
+  quitAndInstallUpdate,
+  setAutoUpdate,
+} from "./updater";
 
 const isDev = !app.isPackaged;
 
@@ -235,6 +244,9 @@ function registerIpc(): void {
   ipcMain.handle("code:editor-agent", (_e, request: EditorAgentRequest) =>
     runEditorAgent(request),
   );
+  ipcMain.handle("code:editor-agent-stop", (_e, specPath: string) => {
+    stopEditorAgent(specPath);
+  });
 
   ipcMain.handle("testloop:start", (_e, request: TestLoopRequest) =>
     startTestLoop(request),
@@ -250,9 +262,16 @@ function registerIpc(): void {
   );
 
   ipcMain.handle("settings:get", () => loadSettings());
-  ipcMain.handle("settings:save", (_e, settings: AppSettings) =>
-    saveSettings(settings),
-  );
+  ipcMain.handle("settings:save", async (_e, settings: AppSettings) => {
+    const saved = await saveSettings(settings);
+    setAutoUpdate(saved.autoUpdate !== false);
+    return saved;
+  });
+
+  ipcMain.handle("update:get-status", () => getUpdateStatus());
+  ipcMain.handle("update:check", () => checkForUpdates());
+  ipcMain.handle("update:download", () => downloadUpdate());
+  ipcMain.handle("update:quit-and-install", () => quitAndInstallUpdate());
 
   ipcMain.handle("window:minimize", () => getFocusedWindow()?.minimize());
   ipcMain.handle("window:toggle-maximize", () => {
@@ -295,6 +314,16 @@ app.whenReady().then(() => {
       win.webContents.send("agent:event", event);
     }
   });
+
+  onUpdateStatus((status) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("update:status", status);
+    }
+  });
+
+  // Honour the persisted auto-update preference (default on). Kicks off a
+  // background check when enabled; a no-op in dev where updates are disabled.
+  void loadSettings().then((s) => initAutoUpdater({ autoUpdate: s.autoUpdate !== false }));
 });
 
 app.on("window-all-closed", () => {

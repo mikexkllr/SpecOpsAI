@@ -4,6 +4,7 @@ import type {
   ArtifactFiles,
   CodeReviewReport,
   FileChangeStatus,
+  TechnicalStory,
 } from "../../shared/api";
 import type { Artifacts } from "../phases";
 import { renderMarkdown } from "../markdown";
@@ -11,6 +12,7 @@ import { renderMarkdown } from "../markdown";
 interface CodeReviewerProps {
   specPath: string;
   artifacts: Artifacts;
+  stories: TechnicalStory[];
   // Open a file in the (separate) code editor view.
   onOpenFile: (path: string) => void;
 }
@@ -31,7 +33,12 @@ const STATUS_GLYPH: Record<FileChangeStatus, string> = {
   renamed: "R",
 };
 
-export function CodeReviewer({ specPath, artifacts, onOpenFile }: CodeReviewerProps): JSX.Element {
+export function CodeReviewer({
+  specPath,
+  artifacts,
+  stories,
+  onOpenFile,
+}: CodeReviewerProps): JSX.Element {
   const [report, setReport] = useState<CodeReviewReport | null>(null);
   const [generating, setGenerating] = useState(false);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
@@ -67,6 +74,7 @@ export function CodeReviewer({ specPath, artifacts, onOpenFile }: CodeReviewerPr
       const r = await window.specops.generateCodeReview({
         specPath,
         artifacts: toApiArtifacts(artifacts),
+        stories,
       });
       setReport(r);
       setExpandedFiles(new Set(r.files.map((f) => f.path)));
@@ -149,8 +157,8 @@ export function CodeReviewer({ specPath, artifacts, onOpenFile }: CodeReviewerPr
                 <div className="marked-tasks">
                   <span className="marked-label">marked implemented</span>
                   {report.markedImplemented.map((m) => (
-                    <span key={`${m.storyId}-${m.taskId}`} className="marked-chip" title={m.title}>
-                      ✓ {m.taskId}
+                    <span key={m.storyId} className="marked-chip" title={m.title}>
+                      ✓ {m.storyId}
                     </span>
                   ))}
                 </div>

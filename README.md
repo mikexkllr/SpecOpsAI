@@ -554,6 +554,66 @@ npm run build
 npm start
 ```
 
+### Packaging installers
+
+SpecOps ships as native installers built with [electron-builder](https://www.electron.build):
+
+| Platform | Format(s)                          |
+| -------- | ---------------------------------- |
+| Windows  | `.exe` (NSIS installer)            |
+| macOS    | `.dmg` + `.zip` (x64 & arm64)      |
+| Linux    | `.AppImage`, `.deb`, `.rpm` (x64)  |
+
+```bash
+# build installers for the current platform into release/
+npm run dist
+
+# build the unpacked app only (no installer) — fast config check
+npm run dist:dir
+```
+
+The packaging config lives in [`electron-builder.yml`](electron-builder.yml).
+
+### Releases & auto-update
+
+Users don't build from source — they download an installer from the
+[Releases page](https://github.com/mikexkllr/SpecOpsAI/releases), and the app
+keeps itself up to date from there via
+[electron-updater](https://www.electron.build/auto-update).
+
+**Update mode.** Settings → _updates_ offers two modes (default **automatic**):
+
+- **automatic** — on launch, SpecOps checks GitHub Releases and downloads a newer
+  version in the background, then prompts you to restart to install.
+- **manual** — nothing happens until you press _check for updates_.
+
+Either way the final _restart & install_ is always an explicit click. Auto-update
+is disabled when running unpackaged (i.e. `npm run dev` / `npm start`).
+
+**Cutting a release.** The [`Release` workflow](.github/workflows/release.yml)
+builds all three platforms in parallel on GitHub-hosted runners and uploads the
+installers — plus the `latest*.yml` metadata electron-updater reads — to a
+GitHub Release.
+
+```bash
+# 1. bump the version in package.json (e.g. 0.1.0 → 0.2.0)
+# 2. tag and push
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The tag push triggers the workflow, which creates a **draft** release `v0.2.0`
+with every artifact attached. Review it on GitHub and hit **Publish release** to
+ship — only published, non-prerelease releases are offered to users as updates.
+No secrets are required beyond the automatic `GITHUB_TOKEN`.
+
+> **Code signing.** CI builds are unsigned, so Windows SmartScreen and macOS
+> Gatekeeper will warn on first launch, and **macOS auto-update only works once
+> the app is code-signed** (Squirrel.Mac requires a valid signature). Windows
+> (NSIS) and Linux (AppImage) auto-update fine unsigned. To sign, add the usual
+> `CSC_LINK` / `CSC_KEY_PASSWORD` (plus Apple notarization) secrets and reference
+> them in the workflow.
+
 ### Linting & formatting
 
 ```bash

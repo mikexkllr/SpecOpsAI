@@ -10,7 +10,7 @@ import type {
   FileChangeStatus,
   FileReview,
   GenerateCodeReviewRequest,
-  MarkedTask,
+  MarkedStory,
   ReviewVerdict,
   TaskChunk,
   TechnicalStory,
@@ -21,7 +21,7 @@ import { buildChatModel } from "./models";
 import { getActiveProvider } from "./settings";
 import { loadDeps, createFsBackend } from "./deepagentsDeps";
 import { makeBrowserTools, closeBrowser } from "./browserTools";
-import { readWorkers, updateTaskStatus } from "./worker";
+import { readWorkers, markStoryImplemented } from "./worker";
 import { projectRoot, isAbortError, lastAssistantText } from "./utils";
 
 const execFileAsync = promisify(execFile);
@@ -236,54 +236,43 @@ export async function generateCodeReview(
     const { deepagents, messages: M, tools: T } = await loadDeps();
     const model = await buildChatModel(cfg);
 
-    // Snapshot of every open (not-yet-done) task, so the agent knows what it is
-    // allowed to mark implemented and by which id.
+    // The candidates the agent may mark done are whole TECHNICAL STORIES that
+    // aren't done yet — never individual sub-tasks.
     const store = await readWorkers(req.specPath);
-    const openTasks: Array<{ storyId: string; taskId: string; title: string; status: string }> =
-      [];
-    for (const [storyId, state] of Object.entries(store)) {
-      for (const t of state.tasks) {
-        if (t.status !== "done") {
-          openTasks.push({ storyId, taskId: t.id, title: t.title, status: t.status });
-        }
-      }
-    }
-    const taskIndex = new Map(openTasks.map((t) => [`${t.storyId}::${t.taskId}`, t]));
-    const marked: MarkedTask[] = [];
+    const storyIndex = new Map(req.stories.map((s) => [s.id, s]));
+    const openStories = req.stories.filter((s) => store[s.id]?.status !== "done");
+    const marked: MarkedStory[] = [];
 
     let captured: CodeReviewReport | null = null;
 
-    const listTasks = T.tool(
+    const listStories = T.tool(
       async () =>
-        openTasks.length
-          ? openTasks
-              .map((t) => `- ${t.storyId} / ${t.taskId} [${t.status}] — ${t.title}`)
-              .join("\n")
-          : "(no open tasks — nothing to mark)",
+        openStories.length
+          ? openStories.map((s) => `- ${s.id} — ${s.title || "(untitled)"}`).join("\n")
+          : "(no open technical stories — nothing to mark)",
       {
-        name: "list_open_tasks",
+        name: "list_open_stories",
         description:
-          "List technical-story tasks that are not yet done, with their storyId and taskId — the candidates you may mark implemented.",
+          "List technical stories that are not yet done, with their ids — the only units you may mark done.",
         schema: z.object({}),
       },
     );
 
-    const markTask = T.tool(
-      async (input: { storyId: string; taskId: string }) => {
-        const key = `${input.storyId}::${input.taskId}`;
-        const task = taskIndex.get(key);
-        if (!task) return `No open task ${input.taskId} in story ${input.storyId}.`;
-        await updateTaskStatus(req.specPath, input.storyId, input.taskId, "done");
-        if (!marked.some((m) => m.storyId === input.storyId && m.taskId === input.taskId)) {
-          marked.push({ storyId: input.storyId, taskId: input.taskId, title: task.title });
+    const markStory = T.tool(
+      async (input: { storyId: string }) => {
+        const story = storyIndex.get(input.storyId);
+        if (!story) return `No technical story with id ${input.storyId}.`;
+        await markStoryImplemented(req.specPath, input.storyId);
+        if (!marked.some((m) => m.storyId === input.storyId)) {
+          marked.push({ storyId: input.storyId, title: story.title });
         }
-        return `Marked ${input.taskId} as implemented.`;
+        return `Marked technical story ${input.storyId} as done.`;
       },
       {
-        name: "mark_task_implemented",
+        name: "mark_story_implemented",
         description:
-          "Mark a technical-story task as implemented (done) when the changes clearly satisfy it. Use storyId + taskId from list_open_tasks.",
-        schema: z.object({ storyId: z.string(), taskId: z.string() }),
+          "Mark a whole TECHNICAL STORY as done when the changes clearly and fully implement it. Only technical stories can be marked — not sub-tasks. Use the story id (e.g. TS-2) from list_open_stories.",
+        schema: z.object({ storyId: z.string() }),
       },
     );
 
@@ -333,8 +322,8 @@ export async function generateCodeReview(
       "## Your job",
       "1. Call `git_diff` to see the uncommitted changes.",
       "2. Read the relevant files with your filesystem tools to understand the changes in context.",
-      "3. Call `list_open_tasks` to see which technical-story tasks are still open.",
-      "4. For every task the diff clearly and fully implements, call `mark_task_implemented`. Be conservative — only mark what the code actually does.",
+      "3. Call `list_open_stories` to see which technical stories are still open.",
+      "4. For every technical story the diff clearly and fully implements, call `mark_story_implemented`. Be conservative — only mark a whole story when the code actually completes it. Only technical stories are markable, never sub-tasks.",
       "5. Call `emit_review` exactly once: an `overview` of the whole changeset, then a per-file `summary` describing — in your own words — what you changed in that file and why it aligns with the spec/stories. Flag anything risky or incomplete in the relevant file summary.",
       "",
       "Describe the changes as the author who made them. Be concrete; reference symbols and behavior. Do not invent files that aren't in the diff.",
@@ -352,14 +341,14 @@ export async function generateCodeReview(
     const agent = deepagents.createDeepAgent({
       model,
       systemPrompt: system,
-      tools: [gitDiffTool, listTasks, markTask, emitReview],
+      tools: [gitDiffTool, listStories, markStory, emitReview],
       backend,
     });
 
     await agent.invoke({
       messages: [
         new M.HumanMessage(
-          "Review the current changes now: inspect the diff, mark any fully-implemented tasks, then call emit_review.",
+          "Review the current changes now: inspect the diff, mark any fully-implemented technical stories, then call emit_review.",
         ),
       ],
     });
@@ -390,8 +379,8 @@ function qaSystemPrompt(req: CodeReviewRequest): string {
     if (req.report.markedImplemented.length) {
       sections.push(
         "",
-        "Tasks you marked implemented: " +
-          req.report.markedImplemented.map((m) => m.taskId).join(", "),
+        "Technical stories you marked done: " +
+          req.report.markedImplemented.map((m) => m.storyId).join(", "),
       );
     }
   }

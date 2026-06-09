@@ -4,10 +4,20 @@
   "version": "0.1.0",
   "description": "Spec-Driven Development desktop IDE with integrated AI agent",
   "main": "dist/main/main.js",
+  "author": {
+    "name": "Mike Keller"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/mikexkllr/SpecOpsAI",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mikexkllr/SpecOpsAI.git"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json && vite build",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
+    "build:app": "npm run build:main && npm run build:renderer",
     "dev": "npm run build:main && concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "start": "electron .",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.json --noEmit",
@@ -17,7 +27,10 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\"",
     "icon": "node scripts/render-icon.mjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "dist": "npm run build:app && electron-builder",
+    "dist:dir": "npm run build:app && electron-builder --dir",
+    "dist:publish": "npm run build:app && electron-builder --publish always"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
@@ -29,6 +42,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.0",
     "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
     "eslint": "^9.39.4",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.1.1",
@@ -47,6 +61,7 @@
     "@langchain/ollama": "^1.2.6",
     "@langchain/openai": "^1.4.4",
     "deepagents": "^1.9.0",
+    "electron-updater": "^6.3.9",
     "marked": "^18.0.0",
     "playwright": "^1.60.0",
     "prismjs": "^1.30.0",

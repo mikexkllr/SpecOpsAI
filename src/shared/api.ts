@@ -287,24 +287,24 @@ export interface FileReview {
   summary: string;
 }
 
-// A technical-story task the agent decided was satisfied by the changes and
-// marked implemented on its own.
-export interface MarkedTask {
+// A technical story the agent decided was satisfied by the changes and marked
+// done on its own. Only whole technical stories are markable — not sub-tasks.
+export interface MarkedStory {
   storyId: string;
-  taskId: string;
   title: string;
 }
 
 export interface CodeReviewReport {
   overview: string;
   files: FileReview[];
-  markedImplemented: MarkedTask[];
+  markedImplemented: MarkedStory[];
   error?: string;
 }
 
 export interface GenerateCodeReviewRequest {
   specPath: string;
   artifacts: ArtifactFiles;
+  stories: TechnicalStory[];
 }
 
 // A follow-up question about an existing review (the Q&A chat). The review
@@ -331,13 +331,14 @@ export interface CodeReviewResult {
 export interface EditorAgentRequest {
   specPath: string;
   artifacts: ArtifactFiles;
+  stories: TechnicalStory[];
   history: AgentTurn[];
   message: string;
 }
 
 export interface EditorAgentResult {
   reply: string;
-  markedImplemented: MarkedTask[];
+  markedImplemented: MarkedStory[];
   error?: string;
 }
 
@@ -378,6 +379,35 @@ export interface AppSettings {
   agentMode: AgentMode;
   codingAgent: CodingAgentId;
   devServerUrl?: string;
+  // When true, the app checks GitHub Releases for a newer version on startup and
+  // downloads it in the background. The user always confirms the final restart.
+  autoUpdate?: boolean;
+}
+
+// Phases of the auto-updater state machine, mirrored to the renderer so the
+// Settings UI can show progress and offer the right action.
+export type UpdateState =
+  | "idle" // never checked, or check finished with no update
+  | "checking" // contacting GitHub Releases
+  | "available" // a newer version exists (download may be in progress)
+  | "downloading" // actively pulling the update package
+  | "downloaded" // ready to install on restart
+  | "not-available" // checked, already on the latest version
+  | "error" // last check/download failed
+  | "disabled"; // updates unavailable (e.g. running unpackaged in dev)
+
+export interface UpdateStatus {
+  state: UpdateState;
+  // The version currently running.
+  currentVersion: string;
+  // The version offered by the latest release, once known.
+  newVersion?: string;
+  // 0–100 while downloading.
+  progressPercent?: number;
+  // Human-readable detail for the "error" state.
+  error?: string;
+  // GitHub release notes for the available version, when provided.
+  releaseNotes?: string;
 }
 
 export interface ProviderDescriptor {
@@ -497,6 +527,7 @@ export interface SpecOpsApi {
   generateCodeReview(request: GenerateCodeReviewRequest): Promise<CodeReviewReport>;
   reviewCode(request: CodeReviewRequest): Promise<CodeReviewResult>;
   runEditorAgent(request: EditorAgentRequest): Promise<EditorAgentResult>;
+  stopEditorAgent(specPath: string): Promise<void>;
   startTestLoop(request: TestLoopRequest): Promise<void>;
   stopTestLoop(): Promise<void>;
   getTestLoopState(): Promise<TestLoopState>;
@@ -505,6 +536,11 @@ export interface SpecOpsApi {
   mergeToMain(specPath: string): Promise<MergeResult>;
   getSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<AppSettings>;
+  getUpdateStatus(): Promise<UpdateStatus>;
+  checkForUpdates(): Promise<UpdateStatus>;
+  downloadUpdate(): Promise<UpdateStatus>;
+  quitAndInstallUpdate(): Promise<void>;
+  onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
   minimizeWindow(): Promise<void>;
   toggleMaximizeWindow(): Promise<boolean>;
   closeWindow(): Promise<void>;

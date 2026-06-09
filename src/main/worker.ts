@@ -502,6 +502,22 @@ function allDone(tasks: TaskChunk[]): boolean {
   return tasks.length > 0 && tasks.every((t) => t.status === "done");
 }
 
+// Mark a whole technical story done — the only unit agents are allowed to
+// complete on their own. Creates the worker state if the story was never
+// decomposed, and marks any existing tasks done so progress reads as complete.
+export async function markStoryImplemented(
+  specPath: string,
+  storyId: string,
+): Promise<WorkerState> {
+  const store = await loadStore(specPath);
+  const prev = store[storyId] ?? emptyState(storyId);
+  const tasks = prev.tasks.map((t) => ({ ...t, status: "done" as TaskStatus }));
+  const next: WorkerState = { ...prev, tasks, status: "done", error: undefined };
+  store[storyId] = next;
+  await saveStore(specPath, store);
+  return next;
+}
+
 export async function updateTaskStatus(
   specPath: string,
   storyId: string,

@@ -363,6 +363,7 @@ export function ImplementationView({
         <CodeReviewer
           specPath={specPath}
           artifacts={artifacts}
+          stories={stories}
           onOpenFile={(path) => {
             setEditorRequest({ path, id: Date.now() });
             setTab("editor");
@@ -376,7 +377,12 @@ export function ImplementationView({
     return (
       <div className="flex-col flex-1">
         <Tabs tab={tab} onChange={setTab} />
-        <CodeEditor specPath={specPath} artifacts={artifacts} openRequest={editorRequest} />
+        <CodeEditor
+          specPath={specPath}
+          artifacts={artifacts}
+          stories={stories}
+          openRequest={editorRequest}
+        />
       </div>
     );
   }

@@ -1,0 +1,74 @@
+# electron-builder configuration — packages SpecOps into platform installers and
+# publishes them (plus the auto-update metadata electron-updater reads) to the
+# project's GitHub Releases. See https://www.electron.build/configuration.
+appId: io.github.mikexkllr.specops
+productName: SpecOps
+copyright: Copyright © 2026 Mike Keller
+
+# Everything the app needs at runtime. The renderer/main/preload are compiled
+# into dist/ by `npm run build:app`; assets/ holds the icons used at runtime.
+files:
+  - dist/**/*
+  - assets/icon.png
+  - package.json
+
+directories:
+  output: release
+  buildResources: assets
+
+# Playwright spawns its driver as a child process, which cannot run from inside
+# the asar archive — unpack it so the binary stays on disk.
+asarUnpack:
+  - node_modules/playwright/**
+  - node_modules/playwright-core/**
+
+# Pull releases from this project's GitHub Releases. electron-updater uses the
+# same coordinates to discover and download updates from the running app.
+publish:
+  provider: github
+  owner: mikexkllr
+  repo: SpecOpsAI
+
+mac:
+  category: public.app-category.developer-tools
+  icon: assets/icon.png
+  target:
+    # zip is required for electron-updater to deliver macOS updates.
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  # Gatekeeper hardening; harmless when the build is unsigned (open-source CI).
+  hardenedRuntime: true
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+win:
+  icon: assets/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-Setup-${version}.${ext}
+
+linux:
+  icon: assets/icon.png
+  category: Development
+  maintainer: Mike Keller
+  synopsis: Spec-Driven Development desktop IDE with integrated AI agent
+  target:
+    # AppImage carries the auto-updater; deb/rpm cover the major package managers.
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+    - target: rpm
+      arch: [x64]
+
+appImage:
+  artifactName: ${productName}-${version}-${arch}.${ext}
