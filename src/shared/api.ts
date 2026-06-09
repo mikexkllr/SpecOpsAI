@@ -91,7 +91,8 @@ export type CodingAgentId =
   | "deepagent"
   | "gh-copilot"
   | "codex"
-  | "antigravity";
+  | "antigravity"
+  | "opencode";
 
 export type TaskStatus = "pending" | "in-progress" | "needs-attention" | "done";
 
@@ -342,7 +343,14 @@ export interface EditorAgentResult {
   error?: string;
 }
 
-export type ProviderId = "anthropic" | "openai" | "google" | "ollama" | "bedrock";
+export type ProviderId =
+  | "anthropic"
+  | "openai"
+  | "google"
+  | "ollama"
+  | "bedrock"
+  | "opencode-zen"
+  | "opencode-go";
 
 // How a provider exposes extended thinking / reasoning, and thus which control
 // the Settings form renders for it:
@@ -481,6 +489,36 @@ export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
       "Claude (and other) models via the AWS Bedrock Converse API. Authenticate with a Bedrock API key (bearer token) + endpoint + region — like a company proxy/gateway — or with AWS access keys.",
     thinking: "budget",
     defaultThinkingBudget: 2048,
+  },
+  {
+    id: "opencode-zen",
+    label: "OpenCode Zen",
+    needsApiKey: true,
+    defaultBaseUrl: "https://opencode.ai/zen/v1",
+    defaultModel: "glm-5",
+    suggestedModels: [
+      "glm-5",
+      "minimax-m2.5",
+      "kimi-k2.5",
+      "qwen3.6-plus",
+      "gpt-5-nano",
+      "claude-sonnet-4-5",
+      "deepseek-v4-flash-free",
+    ],
+    description:
+      "Pay-as-you-go gateway of curated coding models (OpenAI-compatible). Sign in at opencode.ai, add billing, and paste your Zen API key. Cheap picks: glm-5, minimax-m2.5 — some models (…-free) cost nothing.",
+    thinking: "none",
+  },
+  {
+    id: "opencode-go",
+    label: "OpenCode Go",
+    needsApiKey: true,
+    defaultBaseUrl: "https://opencode.ai/zen/go/v1",
+    defaultModel: "glm-5",
+    suggestedModels: ["glm-5", "glm-5.1", "kimi-k2.6", "deepseek-v4-flash", "qwen3.6-plus", "minimax-m2.5"],
+    description:
+      "Flat-rate subscription (~$5 first month, then $10/mo) over open coding models (OpenAI-compatible). Subscribe via OpenCode Zen and use the same API key. Predictable spend for steady use.",
+    thinking: "none",
   },
 ];
 

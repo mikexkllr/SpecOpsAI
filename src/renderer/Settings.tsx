@@ -455,6 +455,12 @@ function CodingAgentSection({
       label: "antigravity (google)",
       description: "runs `antigravity --print` CLI for each task — Google's next-gen coding agent",
     },
+    {
+      id: "opencode",
+      label: "opencode",
+      description:
+        "runs `opencode run` CLI for each task — install opencode and set its model/auth (point it at OpenCode Zen for cheap models)",
+    },
   ];
   return (
     <div className="divider-t" style={{ paddingTop: 18 }}>

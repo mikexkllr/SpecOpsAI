@@ -48,6 +48,21 @@ function maskKey(v?: string): string {
   return `${v.slice(0, 4)}…${v.slice(-2)} (len ${v.length})`;
 }
 
+// OpenAI Chat Completions and any compatible gateway (OpenCode Zen / Go, custom
+// proxies…) share one builder: same SDK, the endpoint is just the base URL.
+async function buildOpenAICompatible(cfg: ProviderConfig, label: string): Promise<BaseChatModel> {
+  if (!cfg.apiKey) throw new Error(`${label} API key is not set. Configure it in Settings.`);
+  const { ChatOpenAI } = await esm<OpenAIMod>("@langchain/openai");
+  const t = cfg.thinking;
+  return new ChatOpenAI({
+    apiKey: cfg.apiKey,
+    model: cfg.model,
+    configuration: cfg.baseUrl ? { baseURL: cfg.baseUrl } : undefined,
+    // Only applies to reasoning models (o-series, gpt-5…); ignored otherwise.
+    ...(t?.enabled === true && t?.effort ? { reasoningEffort: t.effort } : {}),
+  });
+}
+
 export async function buildChatModel(cfg: ProviderConfig): Promise<BaseChatModel> {
   const t = cfg.thinking;
   const thinkingOn = t?.enabled === true;
@@ -69,17 +84,12 @@ export async function buildChatModel(cfg: ProviderConfig): Promise<BaseChatModel
           : {}),
       });
     }
-    case "openai": {
-      if (!cfg.apiKey) throw new Error("OpenAI API key is not set. Configure it in Settings.");
-      const { ChatOpenAI } = await esm<OpenAIMod>("@langchain/openai");
-      return new ChatOpenAI({
-        apiKey: cfg.apiKey,
-        model: cfg.model,
-        configuration: cfg.baseUrl ? { baseURL: cfg.baseUrl } : undefined,
-        // Only applies to reasoning models (o-series, gpt-5…); ignored otherwise.
-        ...(thinkingOn && t?.effort ? { reasoningEffort: t.effort } : {}),
-      });
-    }
+    case "openai":
+      return buildOpenAICompatible(cfg, "OpenAI");
+    case "opencode-zen":
+      return buildOpenAICompatible(cfg, "OpenCode Zen");
+    case "opencode-go":
+      return buildOpenAICompatible(cfg, "OpenCode Go");
     case "google": {
       if (!cfg.apiKey) throw new Error("Google API key is not set. Configure it in Settings.");
       const { ChatGoogleGenerativeAI } = await esm<GoogleMod>("@langchain/google-genai");

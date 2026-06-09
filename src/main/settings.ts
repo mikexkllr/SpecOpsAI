@@ -19,6 +19,7 @@ const CODING_AGENTS: CodingAgentId[] = [
   "gh-copilot",
   "codex",
   "antigravity",
+  "opencode",
 ];
 
 function settingsPath(): string {

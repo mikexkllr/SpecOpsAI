@@ -97,6 +97,17 @@ export async function runCliAgent(opts: CliAgentOptions): Promise<string> {
       args = ["--print"];
       stdinPrompt = prompt;
       break;
+    case "opencode":
+      // opencode's headless `run` takes the prompt as a positional arg. Like
+      // claude's acceptEdits, it can't answer interactive permission prompts in
+      // this mode, so we skip permissions in both YOLO and HITL — the human gate
+      // in SpecOps is the post-run task approval, not per-edit prompts. opencode
+      // uses its own configured model/auth (point it at OpenCode Zen for cheap
+      // models).
+      cmd = "opencode";
+      args = ["run", "--dangerously-skip-permissions", prompt];
+      stdinPrompt = null;
+      break;
     default:
       throw new Error(`Unknown CLI agent: ${agentId}`);
   }
