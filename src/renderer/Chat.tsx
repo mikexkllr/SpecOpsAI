@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { Phase } from "./phases";
-import type { AgentActivityItem, AgentStreamEvent } from "../shared/api";
+import { CHAT_COMMANDS, type AgentActivityItem, type AgentStreamEvent } from "../shared/api";
 import { renderMarkdown } from "./markdown";
 
 export interface ChatMessage {
@@ -265,6 +265,25 @@ export function Chat({
           <ActivityPanel activity={activity ?? EMPTY_PHASE_ACTIVITY} running={!!running} />
         )}
       </div>
+      <div className="chat-actions">
+        {CHAT_COMMANDS.map((a) => (
+          <button
+            key={a.id}
+            className="chat-action"
+            title={a.hint}
+            disabled={pending}
+            onClick={() => {
+              if (pending) return;
+              // The chip runs the action immediately; any drafted text becomes
+              // its focus ("/clarify only the auth section").
+              onSend(`${a.label} ${draft.trim()}`.trim());
+              setDraft("");
+            }}
+          >
+            {a.label}
+          </button>
+        ))}
+      </div>
       <div className="chat-input-row">
         <textarea
           value={draft}
@@ -275,7 +294,11 @@ export function Chat({
               submit();
             }
           }}
-          placeholder={pending ? "waiting for agent…" : "message the agent…"}
+          placeholder={
+            pending
+              ? "waiting for agent…"
+              : "message the agent — or /clarify, /analyze, /ground, /codebase"
+          }
           rows={2}
           disabled={pending}
         />

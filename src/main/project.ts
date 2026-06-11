@@ -1,29 +1,27 @@
-import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { promisify } from "node:util";
-import type {
-  ArtifactFiles,
-  MergeCheckResult,
-  MergeResult,
-  ProjectInfo,
-  SpecInfo,
-  TestLoopState,
+import {
+  ARTIFACT_FILENAMES,
+  type ArtifactFiles,
+  type CheckoutSpecBranchResult,
+  type MergeCheckResult,
+  type MergeResult,
+  type ProjectInfo,
+  type SpecInfo,
+  type TestLoopState,
 } from "../shared/api";
-
-const execFileP = promisify(execFile);
-
-const ARTIFACT_FILES: Record<keyof ArtifactFiles, string> = {
-  spec: "spec.md",
-  userStories: "user-stories.md",
-  technicalStories: "technical-stories.md",
-  code: "code.md",
-};
-
-async function git(cwd: string, ...args: string[]): Promise<string> {
-  const { stdout } = await execFileP("git", args, { cwd });
-  return stdout.trim();
-}
+import {
+  checkoutBranch,
+  commitPaths,
+  currentBranch,
+  git,
+  gitOk,
+  hasRemote,
+  isWorkingTreeClean,
+} from "./git";
+import { ensureProjectContextFiles } from "./projectContext";
+import { loadSettings } from "./settings";
+import { projectRoot } from "./utils";
 
 async function pathExists(p: string): Promise<boolean> {
   try {
@@ -105,6 +103,12 @@ export async function openProject(projectPath: string): Promise<ProjectInfo> {
   await fs.mkdir(projectPath, { recursive: true });
   await ensureGitRepo(projectPath);
   await fs.mkdir(path.join(projectPath, "specs"), { recursive: true });
+  const createdContext = await ensureProjectContextFiles(projectPath);
+  if (createdContext && (await loadSettings()).autoCommit !== false) {
+    // Commit the scaffolding right away so it doesn't sit as untracked noise
+    // blocking sync, and so collaborators get the constitution immediately.
+    await commitPaths(projectPath, [".specops"], "chore: add SpecOps project context");
+  }
   const specs = await listSpecs(projectPath);
   return {
     path: projectPath,
@@ -137,7 +141,7 @@ export async function createSpec(
   });
 
   await fs.mkdir(specDir, { recursive: true });
-  for (const file of Object.values(ARTIFACT_FILES)) {
+  for (const file of Object.values(ARTIFACT_FILENAMES)) {
     const p = path.join(specDir, file);
     if (!(await pathExists(p))) await fs.writeFile(p, "", "utf8");
   }
@@ -153,9 +157,21 @@ export async function createSpec(
   return info;
 }
 
+// Switch the repo to the spec's branch (used when the user selects a spec in
+// the project bar, so artifacts/worker state always match the branch on disk).
+export async function checkoutSpecBranch(
+  specPath: string,
+): Promise<CheckoutSpecBranchResult> {
+  const meta = await readSpecMeta(specPath);
+  if (!meta || !meta.branch) {
+    return { ok: false, branch: "", warning: "spec metadata missing — cannot determine branch" };
+  }
+  return checkoutBranch(projectRoot(specPath), meta.branch);
+}
+
 export async function readArtifacts(specPath: string): Promise<ArtifactFiles> {
   const result = {} as ArtifactFiles;
-  for (const [key, file] of Object.entries(ARTIFACT_FILES) as [
+  for (const [key, file] of Object.entries(ARTIFACT_FILENAMES) as [
     keyof ArtifactFiles,
     string,
   ][]) {
@@ -170,38 +186,9 @@ export async function writeArtifact(
   artifact: keyof ArtifactFiles,
   content: string,
 ): Promise<void> {
-  const file = ARTIFACT_FILES[artifact];
+  const file = ARTIFACT_FILENAMES[artifact];
   if (!file) throw new Error(`unknown artifact: ${artifact}`);
   await fs.writeFile(path.join(specPath, file), content, "utf8");
-}
-
-import { projectRoot } from "./utils";
-
-async function gitOk(cwd: string, ...args: string[]): Promise<boolean> {
-  try {
-    await git(cwd, ...args);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function currentBranch(cwd: string): Promise<string> {
-  return git(cwd, "rev-parse", "--abbrev-ref", "HEAD");
-}
-
-async function isWorkingTreeClean(cwd: string): Promise<boolean> {
-  const out = await git(cwd, "status", "--porcelain");
-  return out.length === 0;
-}
-
-async function hasRemote(cwd: string, remote: string): Promise<boolean> {
-  try {
-    await git(cwd, "remote", "get-url", remote);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export async function checkMergeReadiness(
@@ -244,7 +231,7 @@ export async function checkMergeReadiness(
   }
 
   let branchUpToDate = true;
-  if (await hasRemote(root, "origin")) {
+  if (await hasRemote(root)) {
     if (await gitOk(root, "fetch", "origin", mainBranch)) {
       try {
         const behind = await git(

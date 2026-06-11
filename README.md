@@ -9,8 +9,29 @@ built on [`deepagents`](https://www.npmjs.com/package/deepagents) (LangChain).
 The app forces the developer through four ordered phases — Spec → User Stories →
 Technical Stories → Implementation — and only unlocks the code editor in the
 last phase. Every chat, Worker and test-loop runs through the same agent
-harness, against any of four configurable model providers
-(Anthropic, OpenAI, Google Gemini, or local Ollama).
+harness, against any of the configurable model providers
+(Anthropic, OpenAI, Google Gemini, AWS Bedrock, OpenCode, or local Ollama).
+
+Three pillars make the workflow more than a chat wrapper:
+
+- **Project context.** Every agent is grounded by a per-project
+  `.specops/constitution.md` (your engineering principles — binding for all
+  agents) and a generated `.specops/codebase.md` (architecture, conventions,
+  commands — produced by the *analyze codebase* action). This is what makes
+  SpecOps usable on large **brownfield** projects: specs and stories reference
+  real files and real conventions instead of inventing structure.
+- **Structured phase playbooks + slash actions.** Each phase agent follows a
+  Spec Kit-style template (`FR-n` requirements, `US-n` stories with priorities
+  and Given/When/Then criteria, `TS-n` stories with dependencies and file
+  lists) and marks ambiguity as `[NEEDS CLARIFICATION]` instead of guessing.
+  In any phase chat you can run `/clarify` (targeted questions), `/analyze`
+  (cross-artifact consistency audit), or `/ground` (verify the artifact
+  against the real code).
+- **Git-native collaboration.** Each spec lives on its own branch; chats and
+  worker state are stored *inside the spec folder* so they travel with the
+  branch. With auto-commit on (default), artifact edits and completed worker
+  tasks become labelled commits, and the project bar has one-click
+  sync (fetch + rebase + push). Selecting a spec checks out its branch.
 
 > **Terminology note.** In this repo, a **Worker** is our ephemeral per-story /
 > per-task deep-agent instance. It is *not* the same thing as a deepagents
@@ -155,6 +176,43 @@ including the markdown preview.
 
 ---
 
+## Project context — constitution & codebase analysis
+
+Two project-wide context files live under `<project>/.specops/` and are
+injected (size-capped) into **every** agent prompt — phase chats, workers,
+the reviewer, the test-fix loop, and external CLI agents:
+
+- **`constitution.md`** — engineering principles, created from a starter
+  template on first open ([projectContext.ts](src/main/projectContext.ts)).
+  Edit it freely; agents treat it as binding ("smallest change that satisfies
+  the acceptance criteria", "follow existing conventions", …).
+- **`codebase.md`** — a generated onboarding document (Overview / Stack /
+  Architecture / Conventions / Commands / Gotchas) produced by the
+  **analyze codebase** button in the project bar or the `/codebase` chat
+  command. The analysis agent explores the repository with filesystem tools
+  (delegating sweeps to the `explore` subagent) and writes the document
+  itself. Re-run it whenever the codebase shifts; the button shows when it
+  was last generated.
+
+Both files are committed, so the whole team — and every agent — shares the
+same grounding. On a brownfield repo, run **analyze codebase** once before
+writing the first spec.
+
+## Slash actions
+
+Available in every phase chat, as `/command` text or via the chips above the
+input ([Chat.tsx](src/renderer/Chat.tsx)). Each expands to a focused
+instruction block server-side ([agent.ts](src/main/agent.ts)); the transcript
+keeps the short command. Add free text after the command to focus it
+(`/analyze just the auth stories`).
+
+| Action | What it does |
+|---|---|
+| `/clarify` | Finds ambiguities in the current artifact, inserts `[NEEDS CLARIFICATION]` markers at the exact spots, and asks ≤5 targeted questions (each with a proposed default). |
+| `/analyze` | Read-only consistency audit across spec ↔ user stories ↔ technical stories: coverage gaps (FR → US → TS), contradictions, terminology drift, constitution violations. Reports Critical/Warning/Info findings; never edits files. |
+| `/ground` | Verifies every claim in the artifact against the real codebase (paths, APIs, behaviors) and reports mismatches with file:line evidence. |
+| `/codebase` | Runs the project-level codebase analysis (same as the project-bar button) and refreshes `.specops/codebase.md`; the chat replies with the analysis' Overview. Unlike the other commands it does not run through the phase agent. |
+
 ## What the chatbot does in each phase
 
 The UI shows **only the artifact for the current phase** ([App.tsx:218-241](src/renderer/App.tsx#L218-L241)).
@@ -210,10 +268,11 @@ would have returned it.
 
 **Trace persistence.** When the turn finishes, the captured trace is attached
 to the agent turn as `AgentTurn.activity` ([api.ts](src/shared/api.ts)) and
-saved to `chats.json` alongside the reply, so reopening a spec replays the
+saved to the spec's own `.specops/chats.json` alongside the reply, so
+reopening a spec — or pulling its branch on another machine — replays the
 thinking + tool calls (collapsed by default under each reply). Tool outputs are
-capped before persisting to keep the file small. Older chats without a trace
-load fine — `activity` is optional.
+capped before persisting to keep the file small. Chats from older builds
+(stored app-locally) are migrated into the spec folder on first read.
 
 **Thinking is configurable per provider.** Each provider has a thinking control
 in Settings ([Settings.tsx](src/renderer/Settings.tsx)) whose shape is declared
@@ -229,32 +288,41 @@ above.
 
 - **What you see:** the `spec.md` markdown editor on the left and a chat panel on the right ([PhaseView.tsx:13-23](src/renderer/PhaseView.tsx#L13-L23)).
 - **Code is hidden.** The implementation tab is not even reachable.
-- **Chatbot job** (system prompt at [agent.ts:36-45](src/main/agent.ts#L36-L45)):
-  - Produce a clear, structured Specification in markdown.
-  - Cover goals, user-visible behavior, constraints, and non-goals.
+- **Chatbot job** (playbook in [agent.ts](src/main/agent.ts) `PHASE_CONFIG`):
+  - Produce a testable Specification with a fixed structure: Summary, Context
+    (current behavior + affected areas, for brownfield changes), Goals,
+    Non-goals, **numbered functional requirements (`FR-1`, `FR-2`, …)**,
+    Constraints, Edge cases, Open questions.
+  - **Never guess**: ambiguity becomes `[NEEDS CLARIFICATION: question]`
+    (max 5, most impactful first) and the questions are asked in the reply.
   - **Do not** include implementation details, user stories, or code.
-  - Refine the existing spec without dropping content the user already has.
-- **Context fed in:** only the current spec markdown (no later artifacts exist yet).
+  - Keep `FR-n` IDs stable so later phases can reference them.
+- **Context fed in:** the project constitution + codebase analysis, and the current spec markdown.
 
 ### 2. User Story phase
 
 - **What you see:** the `user-stories.md` editor + chat ([PhaseView.tsx:24-34](src/renderer/PhaseView.tsx#L24-L34)).
-- **Chatbot job** (prompt at [agent.ts:46-53](src/main/agent.ts#L46-L53)):
-  - Derive **User Stories** from the Spec in standard form
-    `- As a <role>, I want <capability>, so that <value>.`
-  - One story per bullet, grouped under `## Epic: …` headings.
-- **Context fed in:** the Spec is included in the system prompt as reference
-  ([agent.ts:99](src/main/agent.ts#L99)) so the model can re-derive consistently.
+- **Chatbot job:**
+  - Derive **User Stories** from the Spec: `## Epic: …` groups containing
+    `### US-1: <title>` headings, each with the standard story line, a
+    `**Priority:** P1|P2|P3`, `**Covers:** FR-x` traceability, and
+    Given/When/Then `**Acceptance criteria**`.
+  - Every `FR` must be covered by at least one story; uncovered FRs are called out.
+- **Context fed in:** project context + the Spec.
 
 ### 3. Technical Story phase
 
 - **What you see:** the `technical-stories.md` editor + chat ([PhaseView.tsx:35-45](src/renderer/PhaseView.tsx#L35-L45)).
-- **Chatbot job** (prompt at [agent.ts:55-62](src/main/agent.ts#L55-L62)):
-  - Derive **Technical Stories** from the User Stories.
-  - Each story has an ID (`TS-1`, `TS-2`, …), a one-line title, a short
-    description, and acceptance criteria.
-  - Stories must be small and self-contained — each will become a Worker task.
-- **Context fed in:** Spec **and** User Stories ([agent.ts:100-105](src/main/agent.ts#L100-L105)).
+- **Chatbot job:**
+  - Derive **Technical Stories** (`## TS-1: <title>`) from the User Stories,
+    grounded in the real codebase: each carries `**Covers:** US-x`,
+    `**Depends on:** TS-y|none` (independent stories can run in parallel),
+    `**Files:**` (verified real paths, `(new)` for additions), verifiable
+    acceptance criteria, and an `### Example` code snippet of the key
+    interface/stub the story builds toward.
+  - Stories are small (≈ half a day), self-contained, and ordered so
+    dependencies come first — each becomes a Worker task.
+- **Context fed in:** project context + Spec **and** User Stories.
 
 ### 4. Implementation phase
 
@@ -368,18 +436,22 @@ max-iterations | error | stopped`.
 ## Project / spec layout on disk
 
 When you open a folder, the app initializes a git repo if needed
-([project.ts:30-43](src/main/project.ts#L30-L43)) and creates `specs/`. Each
-spec lives in its own folder with its own git branch:
+([project.ts](src/main/project.ts)), creates `specs/`, and scaffolds the
+project context. Each spec lives in its own folder with its own git branch:
 
 ```
 <your-project>/
 ├── .git/
 ├── README.md                       # auto-created on first init
+├── .specops/
+│   ├── constitution.md             # project principles — injected into every agent
+│   └── codebase.md                 # generated codebase analysis (analyze codebase button)
 ├── specs/
 │   ├── my-first-spec/              # one folder per spec
 │   │   ├── .specops.json           # SpecInfo metadata (id, name, branch, createdAt)
 │   │   ├── .specops/
-│   │   │   └── workers.json        # decomposed tasks + chat history per story (auto-migrated from subagents.json)
+│   │   │   ├── workers.json        # decomposed tasks + worker chat per story
+│   │   │   └── chats.json          # per-phase agent chats incl. traces — shared via git
 │   │   ├── spec.md
 │   │   ├── user-stories.md
 │   │   ├── technical-stories.md
@@ -390,12 +462,34 @@ spec lives in its own folder with its own git branch:
     └── integration/<storyId>.spec.ts | .test.md
 ```
 
-- A new spec creates a branch `spec/<slug>` ([project.ts:117-123](src/main/project.ts#L117-L123)).
-- Slugs are made unique by suffixing `-2`, `-3`, … ([project.ts:54-61](src/main/project.ts#L54-L61)).
+- A new spec creates a branch `spec/<slug>`; slugs are made unique by
+  suffixing `-2`, `-3`, ….
 - The four artifact files map 1:1 to `ArtifactFiles` keys
-  ([project.ts:9-14](src/main/project.ts#L9-L14)).
+  ([api.ts](src/shared/api.ts) `ARTIFACT_FILENAMES`).
 - Multiple specs can be developed in parallel; each gets its own branch and
-  folder, and the UI lets you switch between them in the project bar.
+  folder, and **selecting a spec in the project bar checks out its branch**
+  (skipped with a warning when the tree is dirty — never forced).
+
+### Git collaboration
+
+Everything an agent produces lives in the repo, so the unit of collaboration
+is a plain git branch:
+
+- **Auto-commit (default on, Settings → git collaboration).** Artifact edits
+  by the phase agent become `docs(<spec>): update spec.md (spec agent)`
+  commits scoped to the spec folder; a completed worker task commits the
+  working tree as `feat(TS-2): <task title> [TS-2.1, review: approved]`;
+  context scaffolding and codebase analyses are committed as `chore:` commits.
+- **Sync.** The `⇅ sync` button in the project bar runs
+  fetch + `pull --rebase` + `push -u` for the current branch and reports the
+  outcome inline. It refuses to run on a dirty tree rather than stashing
+  behind your back.
+- **Shared state.** Phase chats (with traces) and worker state ride inside
+  `specs/<id>/.specops/`, so a teammate who pulls the branch sees the full
+  conversation and task progress that produced the code.
+- **Merge gate.** The test-loop panel's merge flow still verifies green
+  tests, a clean tree, and an up-to-date branch before `merge --no-ff` into
+  `main`.
 
 ---
 
@@ -484,10 +578,14 @@ so changing it in Settings takes effect on the next message.
 | File | Purpose |
 |---|---|
 | [main.ts](src/main/main.ts) | Creates the `BrowserWindow` and registers every `ipcMain.handle` for `project:*`, `spec:*`, `agent:*`, `worker:*`, `testloop:*`, `settings:*`. Also rebroadcasts test-loop state to all renderer windows ([main.ts:139-143](src/main/main.ts#L139-L143)). |
-| [agent.ts](src/main/agent.ts) | The **phase chatbot**. Builds a per-phase system prompt ([agent.ts:72-118](src/main/agent.ts#L72-L118)), flushes the UI's current artifact to disk, constructs a deepagent with a `FilesystemBackend` rooted at the project root ([agent.ts:182-225](src/main/agent.ts#L182-L225)), then diffs the on-disk artifact against the pre-turn baseline and returns `{ reply, artifact? }`. The artifact is populated whenever the post-turn file differs from the baseline — i.e. whenever the agent wrote to it via `write_file` / `edit_file`. |
-| [models.ts](src/main/models.ts) | Provider factory. Lazily ESM-imports `@langchain/anthropic`, `@langchain/openai`, `@langchain/google-genai`, or `@langchain/ollama` and returns a typed `BaseChatModel`. |
-| [project.ts](src/main/project.ts) | All filesystem + git work. `openProject` ensures a git repo and a `specs/` dir; `createSpec` slugifies the name, creates a `spec/<slug>` branch, writes the four empty artifact files plus `.specops.json`. `readArtifacts` / `writeArtifact` map artifact keys to filenames. |
-| [settings.ts](src/main/settings.ts) | Loads/saves `settings.json` from `app.getPath("userData")`, deep-merges it against the descriptor defaults, and caches the result. Exposes `getActiveProvider()` for agent code. |
+| [agent.ts](src/main/agent.ts) | The **phase chatbot**. Builds a per-phase system prompt from the `PHASE_CONFIG` playbooks + project context, handles the `/clarify` `/analyze` `/ground` slash actions, flushes the UI's current artifact to disk, runs a deepagent over the project, then diffs the on-disk artifact against the pre-turn baseline and returns `{ reply, artifact? }`. Auto-commits artifact changes (scoped to the spec folder) when enabled. |
+| [agentCommon.ts](src/main/agentCommon.ts) | Shared agent-harness helpers: `buildProjectBackend` (the one CompositeBackend construction used by every agent) and the chat-history → LangChain message converters. |
+| [projectContext.ts](src/main/projectContext.ts) | Project context: scaffolds `.specops/constitution.md`, runs the codebase-analysis agent that writes `.specops/codebase.md`, and exposes `projectContextSections()` — the capped prompt sections injected into every agent. |
+| [git.ts](src/main/git.ts) | Low-level git helpers plus the collaboration verbs: `commitPaths` (never-throwing auto-commit), `syncWithRemote` (fetch + rebase + push), `checkoutBranch` (safe spec-branch switching). |
+| [models.ts](src/main/models.ts) | Provider factory. Lazily ESM-imports the LangChain provider package and returns a typed `BaseChatModel`. For Anthropic, Claude 4.6+ models get adaptive thinking; older models keep the budget form. |
+| [project.ts](src/main/project.ts) | Project/spec filesystem + git orchestration. `openProject` ensures a git repo, `specs/`, and the project context; `createSpec` slugifies the name, creates a `spec/<slug>` branch, writes the four empty artifact files plus `.specops.json`. `readArtifacts` / `writeArtifact` map artifact keys to filenames; merge readiness/merge live here too. |
+| [chat.ts](src/main/chat.ts) | Per-spec chat persistence in `<spec>/.specops/chats.json` (shared via git), with lazy migration from the legacy app-local store. |
+| [settings.ts](src/main/settings.ts) | Loads/saves `settings.json` from `app.getPath("userData")`, deep-merges it against the descriptor defaults, and caches the result. Exposes `getActiveProvider()` for agent code. New: `autoCommit` (default on). |
 | [worker.ts](src/main/worker.ts) | The implementation-phase brain. Stores per-story state in `<spec>/.specops/workers.json` (legacy `subagents.json` is auto-migrated). Implements: `decomposeStory` (forced `emit_tasks` tool call), `workerChat` (free-form chat with filesystem tools), `runWorkerTask` (single decomposed-task execution with optional auto-complete), `generateUnitTests`, `generateIntegrationTests` (with framework auto-detect), `updateTaskStatus`, `resetWorker`. Every Worker is wired with the generic deepagents `SubAgent`s from [workerSubagents.ts](src/main/workerSubagents.ts) (`plan`, `explore`, `test-author`) so it can delegate sub-work via the built-in `task` tool. |
 | [workerSubagents.ts](src/main/workerSubagents.ts) | Defines the three generic deepagents `SubAgent` specs (`plan`, `explore`, `test-author`) registered on every Worker for context-isolated delegation. |
 | [deepagentsDeps.ts](src/main/deepagentsDeps.ts) | Cached ESM loader for `deepagents`, `@langchain/core/messages`, and `@langchain/core/tools`. All main-side agent code imports through this single point. |

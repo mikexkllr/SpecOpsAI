@@ -1,7 +1,5 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type * as DeepAgents from "deepagents";
-import type { BaseMessage } from "@langchain/core/messages";
 import { z } from "zod";
 import type {
   ArtifactFiles,
@@ -27,15 +25,16 @@ import {
   workerSubagents,
   testGenSubagents,
 } from "./workerSubagents";
-import { loadDeps, createFsBackend } from "./deepagentsDeps";
+import { loadDeps } from "./deepagentsDeps";
+import { buildProjectBackend, toLcMessages, type ChatMessage as ChatMsg } from "./agentCommon";
+import { projectContextSections } from "./projectContext";
+import { commitPaths } from "./git";
 import { runCliAgent, buildCliTaskPrompt, emitWorkerStatus } from "./cliAgent";
 import { runReviewerAgent } from "./reviewer";
 import { projectRoot, lastAssistantText, isAbortError } from "./utils";
 
 const STORE_FILE = path.join(".specops", "workers.json");
 const LEGACY_STORE_FILE = path.join(".specops", "subagents.json");
-
-type ChatMsg = { role: "user" | "assistant"; content: string };
 
 const abortControllers = new Map<string, AbortController>();
 
@@ -62,30 +61,6 @@ function releaseAbortController(
 
 export function stopWorker(specPath: string, storyId: string): void {
   abortControllers.get(abortKey(specPath, storyId))?.abort();
-}
-
-type BackendFactory = NonNullable<DeepAgents.CreateDeepAgentParams["backend"]>;
-
-async function buildBackend(specPath: string): Promise<BackendFactory> {
-  // virtualMode: true sandboxes paths under rootDir. Without it, deepagents'
-  // built-in prompt tells the model to use absolute paths starting with `/`,
-  // which then escape rootDir entirely (path.resolve drops the prefix), so the
-  // model's write_file calls land in the real filesystem root and silently fail.
-  //
-  // CompositeBackend routes deepagents' internal eviction paths
-  // (/conversation_history, /large_tool_results) into an in-memory StateBackend
-  // so they never litter the project root.
-  const { deepagents } = await loadDeps();
-  const { CompositeBackend, StateBackend } = deepagents;
-  const fsBackend = createFsBackend(deepagents, {
-    rootDir: projectRoot(specPath),
-    virtualMode: true,
-  });
-  return (runtime) =>
-    new CompositeBackend(fsBackend, {
-      "/conversation_history": new StateBackend(runtime),
-      "/large_tool_results": new StateBackend(runtime),
-    });
 }
 
 async function migrateLegacyStore(specPath: string): Promise<void> {
@@ -147,26 +122,26 @@ function storySection(story: TechnicalStory): string {
 function decompositionPrompt(
   story: TechnicalStory,
   artifacts: ArtifactFiles,
+  ctx: string[],
 ): string {
   return [
     "You decompose one Technical Story into the smallest useful implementation chunks.",
-    "Call the `emit_tasks` tool exactly once with 2–8 task objects. Do not reply in prose.",
-    "Each chunk must be independently implementable in under ~30 minutes.",
-    "Use the story id as prefix for chunk ids (e.g. " + story.id + ".1).",
-    "",
+    [
+      "## How to work",
+      "1. First GROUND yourself: use `read_file` / `glob` / `grep` to look at the files the story touches, so the chunks reference real paths and real symbols — not guesses.",
+      "2. Then call the `emit_tasks` tool exactly once with 2–8 task objects. Do not reply in prose.",
+      "",
+      "Chunk rules:",
+      "- Each chunk is independently implementable in under ~30 minutes and leaves the build green.",
+      `- Use the story id as prefix for chunk ids (e.g. ${story.id}.1) and order chunks so earlier ones unblock later ones.`,
+      "- Each description states WHAT to change, WHERE (real file paths), and a verifiable DONE condition.",
+    ].join("\n"),
+    ctx.join("\n\n"),
     contextSections(artifacts),
-    "",
     storySection(story),
   ]
     .filter(Boolean)
     .join("\n\n");
-}
-
-async function toLcMessages(messages: ChatMsg[]): Promise<BaseMessage[]> {
-  const { messages: M } = await loadDeps();
-  return messages.map((m) =>
-    m.role === "user" ? new M.HumanMessage(m.content) : new M.AIMessage(m.content),
-  );
 }
 
 export async function readWorkers(specPath: string): Promise<WorkerStore> {
@@ -210,9 +185,16 @@ export async function decomposeStory(
     );
 
     const cfg = await getActiveProvider();
+    const root = projectRoot(req.specPath);
     const agent = deepagents.createDeepAgent({
       model: await buildChatModel(cfg),
-      systemPrompt: decompositionPrompt(req.story, req.artifacts),
+      systemPrompt: decompositionPrompt(
+        req.story,
+        req.artifacts,
+        await projectContextSections(root),
+      ),
+      // Real filesystem access so the decomposition is grounded in actual code.
+      backend: await buildProjectBackend(root),
       tools: [emitTasks],
     });
     await agent.invoke(
@@ -264,6 +246,7 @@ function chatSystemPrompt(
   story: TechnicalStory,
   tasks: TaskChunk[],
   artifacts: ArtifactFiles,
+  ctx: string[],
 ): string {
   const taskBlock = tasks.length
     ? tasks
@@ -275,14 +258,17 @@ function chatSystemPrompt(
     "Your context is isolated: do not discuss other stories. Keep responses concise and actionable.",
     "You have filesystem tools (ls, read_file, write_file, edit_file, glob, grep) rooted at the PROJECT ROOT — you can see and edit the full source tree (e.g. `src/`, `package.json`, `tests/`). The spec markdown lives under `specs/<id>/`.",
     "You also have a built-in `task` tool that lets you spawn generic deepagents subagents — `plan`, `explore`, `test-author` — for context-isolated sub-work. Delegate large survey / planning / test-writing passes to them rather than inlining everything in your own context.",
-    "Help implement the tasks below by ACTUALLY editing files with write_file / edit_file — do not just describe changes in prose.",
-    "",
+    [
+      "## Working rules",
+      "- ACTUALLY edit files with write_file / edit_file — do not just describe changes in prose.",
+      "- Read the surrounding code first and match its conventions (naming, error handling, imports, test style) instead of introducing new patterns.",
+      "- Make the smallest change that satisfies the acceptance criteria — no drive-by refactors, no speculative abstractions.",
+      "- Leave the project consistent after every task: imports resolve, types line up, existing behavior outside the story untouched.",
+    ].join("\n"),
+    ctx.join("\n\n"),
     contextSections(artifacts),
-    "",
     storySection(story),
-    "",
-    "## Decomposed tasks",
-    taskBlock,
+    "## Decomposed tasks\n\n" + taskBlock,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -302,7 +288,7 @@ async function runStoryWorker(
   const agent = deepagents.createDeepAgent({
     model,
     systemPrompt: system,
-    backend: await buildBackend(specPath),
+    backend: await buildProjectBackend(projectRoot(specPath)),
     subagents: workerSubagents,
   });
   const result = await agent.invoke({ messages: lcMessages }, { signal });
@@ -326,7 +312,8 @@ export async function workerChat(
 
   const ac = makeAbortController(req.specPath, req.story.id);
   try {
-    const system = chatSystemPrompt(req.story, prev.tasks, req.artifacts);
+    const ctx = await projectContextSections(projectRoot(req.specPath));
+    const system = chatSystemPrompt(req.story, prev.tasks, req.artifacts, ctx);
     const history: ChatMsg[] = prev.messages.map((m) => ({
       role: m.role === "user" ? "user" : "assistant",
       content: m.text,
@@ -413,7 +400,8 @@ export async function runWorkerTask(
     let implMessage: WorkerMessage;
     if (usingDeepagent) {
       emitWorkerStatus(req.story.id, "▶ deepagent (built-in) starting…\n");
-      const system = chatSystemPrompt(req.story, inProgressTasks, req.artifacts);
+      const ctx = await projectContextSections(projectRoot(req.specPath));
+      const system = chatSystemPrompt(req.story, inProgressTasks, req.artifacts, ctx);
       const history: ChatMsg[] = prev.messages.map((m) => ({
         role: m.role === "user" ? "user" : "assistant",
         content: m.text,
@@ -430,11 +418,17 @@ export async function runWorkerTask(
       emitWorkerStatus(req.story.id, `\n${reply}\n`);
       implMessage = { role: "agent", text: reply };
     } else {
+      const root = projectRoot(req.specPath);
       const cliReply = await runCliAgent({
         agentId: settings.codingAgent,
-        cwd: projectRoot(req.specPath),
+        cwd: root,
         storyId: req.story.id,
-        prompt: buildCliTaskPrompt(task, req.story, req.artifacts),
+        prompt: buildCliTaskPrompt(
+          task,
+          req.story,
+          req.artifacts,
+          await projectContextSections(root),
+        ),
         yolo: settings.agentMode === "yolo",
         signal: ac.signal,
       });
@@ -479,6 +473,17 @@ export async function runWorkerTask(
     };
     store[req.story.id] = next;
     await saveStore(req.specPath, store);
+
+    // Checkpoint the task as one labelled commit so collaborators can pull
+    // coherent increments. Includes the worker-state save above.
+    if (settings.autoCommit !== false) {
+      const committed = await commitPaths(
+        projectRoot(req.specPath),
+        "all",
+        `feat(${req.story.id}): ${task.title} [${task.id}, review: ${reviewResult.verdict}]`,
+      );
+      if (committed) emitWorkerStatus(req.story.id, `\n✓ committed task ${task.id}\n`);
+    }
     return next;
   } catch (err) {
     const aborted = isAbortError(err);
@@ -547,6 +552,7 @@ function unitTestPrompt(
   tasks: TaskChunk[],
   artifacts: ArtifactFiles,
   testFile: string,
+  ctx: string[],
 ): string {
   const taskBlock = tasks.length
     ? tasks.map((t) => `- ${t.id} ${t.title} — ${t.description}`).join("\n")
@@ -562,6 +568,7 @@ function unitTestPrompt(
     "",
     `## Target file (use write_file to create or overwrite this exact path)\n${testFile}`,
     "",
+    ctx.join("\n\n"),
     contextSections(artifacts),
     "",
     storySection(story),
@@ -592,8 +599,14 @@ export async function generateUnitTests(
     const model = await buildChatModel(cfg);
     const agent = deepagents.createDeepAgent({
       model,
-      systemPrompt: unitTestPrompt(req.story, tasks, req.artifacts, relPath),
-      backend: await buildBackend(req.specPath),
+      systemPrompt: unitTestPrompt(
+        req.story,
+        tasks,
+        req.artifacts,
+        relPath,
+        await projectContextSections(root),
+      ),
+      backend: await buildProjectBackend(root),
       subagents: testGenSubagents,
     });
     const result = await agent.invoke(
@@ -781,6 +794,7 @@ function integrationTestPrompt(
   artifacts: ArtifactFiles,
   testFile: string,
   framework: IntegrationTestFramework,
+  ctx: string[],
 ): string {
   const concrete = framework !== "generic";
   return [
@@ -797,6 +811,7 @@ function integrationTestPrompt(
     "",
     `## Target file (use write_file to create or overwrite this exact path)\n${testFile}`,
     "",
+    ctx.join("\n\n"),
     contextSections(artifacts),
     "",
     userStorySection(story),
@@ -822,8 +837,14 @@ export async function generateIntegrationTests(
     const model = await buildChatModel(cfg);
     const agent = deepagents.createDeepAgent({
       model,
-      systemPrompt: integrationTestPrompt(req.story, req.artifacts, relPath, framework),
-      backend: await buildBackend(req.specPath),
+      systemPrompt: integrationTestPrompt(
+        req.story,
+        req.artifacts,
+        relPath,
+        framework,
+        await projectContextSections(root),
+      ),
+      backend: await buildProjectBackend(root),
       subagents: testGenSubagents,
     });
     const result = await agent.invoke(

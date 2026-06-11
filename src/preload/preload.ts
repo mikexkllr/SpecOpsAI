@@ -60,6 +60,10 @@ const api: SpecOpsApi = {
   getTestLoopState: () => ipcRenderer.invoke("testloop:state"),
   checkMerge: (specPath) => ipcRenderer.invoke("merge:check", specPath),
   mergeToMain: (specPath) => ipcRenderer.invoke("merge:run", specPath),
+  gitSync: (projectPath) => ipcRenderer.invoke("git:sync", projectPath),
+  checkoutSpecBranch: (specPath) => ipcRenderer.invoke("spec:checkout", specPath),
+  getProjectContext: (projectPath) => ipcRenderer.invoke("context:get", projectPath),
+  analyzeCodebase: (projectPath) => ipcRenderer.invoke("context:analyze", projectPath),
   onTestLoopUpdate: (callback: (state: TestLoopState) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: TestLoopState) =>
       callback(state);

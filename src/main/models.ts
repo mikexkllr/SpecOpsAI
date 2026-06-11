@@ -71,16 +71,22 @@ export async function buildChatModel(cfg: ProviderConfig): Promise<BaseChatModel
       if (!cfg.apiKey) throw new Error("Anthropic API key is not set. Configure it in Settings.");
       const { ChatAnthropic } = await esm<AnthropicMod>("@langchain/anthropic");
       const budget = t?.budgetTokens ?? 2048;
-      // When thinking is on, max_tokens must exceed the thinking budget.
+      // Claude 4.6+ models (Opus 4.6/4.7/4.8, Sonnet 4.6, Fable/Mythos 5) only
+      // accept adaptive thinking — `budget_tokens` is removed on Opus 4.7+ and
+      // would 400. Older models still need the enabled+budget form. Either way
+      // max_tokens must leave room for the reasoning plus the actual output.
+      const adaptive = /opus-4-[6-9]|sonnet-4-[6-9]|fable|mythos/.test(cfg.model);
       return new ChatAnthropic({
         apiKey: cfg.apiKey,
         model: cfg.model,
         ...(cfg.baseUrl ? { anthropicApiUrl: cfg.baseUrl } : {}),
         ...(thinkingOn
-          ? {
-              thinking: { type: "enabled" as const, budget_tokens: budget },
-              maxTokens: budget + 4096,
-            }
+          ? adaptive
+            ? { thinking: { type: "adaptive" as const }, maxTokens: 16000 }
+            : {
+                thinking: { type: "enabled" as const, budget_tokens: budget },
+                maxTokens: budget + 4096,
+              }
           : {}),
       });
     }
@@ -172,6 +178,7 @@ export async function buildChatModel(cfg: ProviderConfig): Promise<BaseChatModel
       }
 
       // Secret-safe diagnostics → Electron main-process stdout.
+      // eslint-disable-next-line no-console
       console.log(
         `[bedrock] model=${cfg.model} region=${region} (${regionSource}) auth=${authMode} ` +
           `endpoint=${endpoint || "(default AWS)"} ` +

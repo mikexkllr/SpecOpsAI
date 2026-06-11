@@ -1,18 +1,22 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { BaseMessage } from "@langchain/core/messages";
-import type {
-  AgentStreamEvent,
-  AgentTurn,
-  AgentTurnRequest,
-  AgentTurnResult,
-  ArtifactFiles,
-  Phase,
+import {
+  ARTIFACT_FILENAMES,
+  type AgentAction,
+  type AgentStreamEvent,
+  type AgentTurnRequest,
+  type AgentTurnResult,
+  type ArtifactFiles,
+  type Phase,
 } from "../shared/api";
-import { getActiveProvider } from "./settings";
+import { getActiveProvider, loadSettings } from "./settings";
 import { buildChatModel } from "./models";
 import { workerSubagents } from "./workerSubagents";
-import { loadDeps, createFsBackend } from "./deepagentsDeps";
+import { loadDeps } from "./deepagentsDeps";
+import { buildProjectBackend, turnsToLcMessages } from "./agentCommon";
+import { projectContextSections } from "./projectContext";
+import { commitPaths } from "./git";
 import { projectRoot, lastAssistantText } from "./utils";
 
 // --- live event stream ----------------------------------------------------
@@ -39,59 +43,105 @@ interface PhaseConfig {
   guidance: string;
 }
 
+// Spec Kit-style phase playbooks. Each phase gets a concrete artifact template,
+// explicit quality rules, and a brownfield rule: ground claims in the real
+// codebase instead of inventing structure.
 const PHASE_CONFIG: Record<Phase, PhaseConfig> = {
   spec: {
     artifact: "spec",
     label: "Specification",
     guidance: [
-      "Produce a clear, structured software **Specification** in markdown.",
-      "Cover: goals, user-visible behavior, constraints, non-goals.",
-      "Do NOT include implementation details, user stories, or code.",
-      "Refine the existing spec; never drop content the user already has unless they ask.",
-    ].join(" "),
+      "Produce a clear, testable software **Specification** in markdown. Structure it with these sections (omit a section only when it is genuinely empty):",
+      "`## Summary` — 2-4 sentences on what is being built and for whom.",
+      "`## Context` — for changes to an existing system: the CURRENT behavior and the areas of the codebase affected (read the real code first and cite paths). Skip for greenfield work.",
+      "`## Goals` / `## Non-goals` — what success means, and what is explicitly out of scope.",
+      "`## Functional requirements` — numbered `FR-1`, `FR-2`, … Each requirement is user-visible, unambiguous, and verifiable. No implementation details.",
+      "`## Constraints` — performance, compatibility, security, platform limits.",
+      "`## Edge cases` — error states, empty states, concurrency/limits the behavior must handle.",
+      "`## Open questions` — anything unresolved, as `[NEEDS CLARIFICATION: question]` items.",
+      "",
+      "Rules:",
+      "- NEVER guess at an ambiguous requirement: mark it `[NEEDS CLARIFICATION: …]` (keep at most 5 — the most impactful) and ask the user in your reply.",
+      "- No implementation details, no user stories, no code — those belong to later phases.",
+      "- Refine the existing spec; never drop content the user already has unless they ask.",
+      "- Keep requirement IDs (`FR-n`) stable across refinements so later phases can reference them.",
+    ].join("\n"),
   },
   "user-story": {
     artifact: "userStories",
     label: "User Stories",
     guidance: [
-      "Derive **User Stories** from the spec in the standard form:",
-      "`- As a <role>, I want <capability>, so that <value>.`",
-      "One story per bullet. Group related stories under `## Epic: ...` headings.",
-    ].join(" "),
+      "Derive **User Stories** from the Specification. Format:",
+      "`## Epic: <name>` groups related stories; under it, one `### US-1: <short title>` heading per story containing:",
+      "- the story line: `As a <role>, I want <capability>, so that <value>.`",
+      "- `**Priority:** P1|P2|P3` (P1 = must-have for the smallest useful release).",
+      "- `**Covers:** FR-x, FR-y` — the spec requirements this story delivers.",
+      "- `**Acceptance criteria:**` Given/When/Then bullets — concrete and independently testable.",
+      "",
+      "Rules:",
+      "- Every functional requirement in the spec must be covered by at least one story; call out any FR you could not cover.",
+      "- Do not invent features that are not in the spec.",
+      "- Keep `US-n` IDs stable across refinements — downstream tooling parses them.",
+      "- Carry over any `[NEEDS CLARIFICATION]` items that affect a story instead of resolving them silently.",
+    ].join("\n"),
   },
   "technical-story": {
     artifact: "technicalStories",
     label: "Technical Stories",
     guidance: [
-      "Derive **Technical Stories** from the user stories.",
-      "Each story: an ID (`TS-1`, `TS-2`…), a one-line title, a short description, and acceptance criteria.",
-      "These will each become a Worker task — keep them small and self-contained.",
-      "**Include an `### Example` section with a fenced code snippet** for each story — the key interface/type signature, function stub, schema, or config the story introduces (grounded in the real codebase: read the relevant files first, match the existing language and patterns).",
-      "Keep snippets short and illustrative (the shape to build toward), not a full implementation. Use a language tag on the fence (```ts, ```py, …).",
-    ].join(" "),
+      "Derive **Technical Stories** from the User Stories, grounded in the REAL codebase (read the relevant files first). Format: one `## TS-1: <short title>` heading per story containing:",
+      "- a 2-4 sentence description of the change.",
+      "- `**Covers:** US-x, US-y` — the user stories this delivers.",
+      "- `**Depends on:** TS-z` (or `none`) — stories with no mutual dependencies can be implemented in parallel.",
+      "- `**Files:** ` — the real paths likely touched (verify they exist with your tools; mark new files as `(new)`).",
+      "- `**Acceptance criteria:**` verifiable bullets, including 'existing tests still pass'.",
+      "- `### Example` — a short fenced code snippet (with language tag) of the key interface/type/stub the story builds toward, matching the existing language and patterns of the codebase. Illustrative shape, not a full implementation.",
+      "",
+      "Rules:",
+      "- Each story must be small and self-contained — implementable in roughly half a day; split anything bigger.",
+      "- Order stories so dependencies come first.",
+      "- Keep `TS-n` IDs stable across refinements — each becomes a Worker task.",
+    ].join("\n"),
   },
   implementation: {
     artifact: "code",
     label: "Implementation",
     guidance: [
-      "This phase implements the technical stories. Return code or scaffolding notes.",
-      "Sketch the implementation plan; the Workers will do the detailed per-story work.",
-    ].join(" "),
+      "This phase implements the technical stories. Sketch the implementation plan in dependency order (which stories can run in parallel), call out risks, and capture decisions in the artifact; the Workers do the detailed per-story work.",
+      "You may edit source files directly in this phase when the user asks for it.",
+    ].join("\n"),
   },
 };
 
-const ARTIFACT_FILENAMES: Record<keyof ArtifactFiles, string> = {
-  spec: "spec.md",
-  userStories: "user-stories.md",
-  technicalStories: "technical-stories.md",
-  code: "code.md",
+// Instruction blocks for the Spec Kit-style slash actions. They reuse the
+// normal phase agent (same tools, same context) with a sharply scoped job.
+const ACTION_INSTRUCTIONS: Record<AgentAction, string> = {
+  clarify: [
+    "## Action: /clarify",
+    "Audit the current artifact for ambiguity. Hunt for: vague adjectives ('fast', 'simple', 'secure'), undefined terms, missing limits/quantities, unstated assumptions, unresolved `[NEEDS CLARIFICATION]` markers, and requirements that cannot be verified.",
+    "1. Insert or update `[NEEDS CLARIFICATION: …]` markers at the exact ambiguous spots in the artifact (persist with `write_file`). Do not restructure or reword anything else.",
+    "2. Reply with at most 5 numbered questions, most impactful first. For each: why it matters, and a sensible default the user can accept with a 'yes'.",
+    "If the artifact is genuinely unambiguous, say so and list what you checked.",
+  ].join("\n"),
+  analyze: [
+    "## Action: /analyze",
+    "Run a READ-ONLY consistency audit across all artifacts that exist (spec, user stories, technical stories). Do NOT modify any file.",
+    "Check: every FR covered by a US and every US by a TS (coverage gaps); contradictions between artifacts; duplicated or conflicting requirements; terminology drift (same concept, different names); acceptance criteria that are not verifiable; violations of the Project Constitution; dependency cycles or impossible ordering in technical stories.",
+    "Reply with a markdown report: `### Critical` / `### Warning` / `### Info` findings (each with artifact + quote + why), a short coverage table (FR → US → TS), and a final 'recommended next steps' list. If everything is consistent, give the coverage table and say so.",
+  ].join("\n"),
+  ground: [
+    "## Action: /ground",
+    "Verify the current artifact against the REAL codebase. For every claim about existing code — file paths, module names, APIs, behaviors, commands — check it with your tools (`glob`, `grep`, `read_file`). Do NOT modify the artifact.",
+    "Reply with a markdown report listing: ✗ mismatches (claim vs. what the code actually does, with file:line evidence), ✓ confirmed claims worth noting, and any parts of the codebase the artifact overlooks but will be affected. End with the concrete corrections you recommend.",
+  ].join("\n"),
 };
 
-function buildSystemPrompt(
+async function buildSystemPrompt(
   phase: Phase,
   artifacts: ArtifactFiles,
   specPath: string,
-): string {
+  action?: AgentAction,
+): Promise<string> {
   const cfg = PHASE_CONFIG[phase];
   const root = projectRoot(specPath);
   const specRel = path.relative(root, specPath).replace(/\\/g, "/") || ".";
@@ -99,13 +149,14 @@ function buildSystemPrompt(
   const sections: string[] = [
     "You are the SpecOps AI agent, guiding a developer through Spec-Driven Development.",
     `Current phase: **${cfg.label}**.`,
+    "",
     cfg.guidance,
     "",
     "## Paths you care about",
     `- Your filesystem tools are rooted at the **project root**: \`${root}\`.`,
     `- This conversation's spec folder: \`/${specRel}/\` — contains \`spec.md\`, \`user-stories.md\`, \`technical-stories.md\`, \`code.md\`.`,
     `- The artifact you are editing in this phase: \`${artifactVirtual}\`.`,
-    "- Source code lives under `/src/`. Dependencies in `/package.json`. Other specs live alongside under `/specs/`.",
+    "- Project context lives in `/.specops/` (constitution.md, codebase.md). Other specs live under `/specs/`.",
     "",
     "## How to work",
     "You have filesystem tools (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`) rooted at the project root. Use them to ground your answers — actually read the relevant files, actually grep for real symbols. All paths are virtual absolute paths starting with `/`.",
@@ -113,10 +164,13 @@ function buildSystemPrompt(
     phase === "implementation"
       ? "You may also edit other source files with `write_file` / `edit_file` in this phase."
       : "",
-    "Finish with a 1–3 sentence reply describing what you changed or what you need from the user. Never answer meta questions about your tools by listing them — just demonstrate by using them.",
-    "",
-    "## Context from earlier phases",
+    "Finish with a short reply: what you changed, what you need from the user (clarifying questions first), nothing else. Never answer meta questions about your tools by listing them — just demonstrate by using them.",
   ];
+
+  const ctx = await projectContextSections(root);
+  if (ctx.length) sections.push("", ...ctx);
+
+  sections.push("", "## Context from earlier phases");
   if (artifacts.spec.trim()) sections.push("### Spec", artifacts.spec.trim());
   if (phase !== "spec" && artifacts.userStories.trim())
     sections.push("### User Stories", artifacts.userStories.trim());
@@ -132,25 +186,20 @@ function buildSystemPrompt(
     `## Current ${cfg.label} (to refine)`,
     current || "(empty — create from scratch based on the user's message)",
   );
+
+  if (action) sections.push("", ACTION_INSTRUCTIONS[action]);
   return sections.join("\n");
 }
 
-export type ChatMessage = { role: "user" | "assistant"; content: string };
-
-async function toLcMessages(messages: ChatMessage[]): Promise<BaseMessage[]> {
-  const { messages: M } = await loadDeps();
-  return messages.map((m) =>
-    m.role === "user" ? new M.HumanMessage(m.content) : new M.AIMessage(m.content),
-  );
-}
-
-function toMessages(history: AgentTurn[], userMessage: string): ChatMessage[] {
-  const msgs: ChatMessage[] = history.map((m) => ({
-    role: m.role === "user" ? "user" : "assistant",
-    content: m.text,
-  }));
-  msgs.push({ role: "user", content: userMessage });
-  return msgs;
+// The message actually sent to the model for a turn. For slash actions the
+// transcript keeps the short "/clarify …" text; the model gets an explicit
+// directive plus any focus text the user added after the command.
+function turnMessage(req: AgentTurnRequest): string {
+  if (!req.action) return req.message;
+  const focus = req.message.trim();
+  return [`Run the /${req.action} action now.`, focus ? `Focus: ${focus}` : ""]
+    .filter(Boolean)
+    .join("\n");
 }
 
 async function syncArtifactToDisk(
@@ -310,31 +359,22 @@ async function streamAgentTurn(
 
 export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurnResult> {
   const phaseCfg = PHASE_CONFIG[req.phase];
-  const system = buildSystemPrompt(req.phase, req.artifacts, req.specPath);
-  const messages = toMessages(req.history, req.message);
+  const root = projectRoot(req.specPath);
 
   try {
+    const system = await buildSystemPrompt(req.phase, req.artifacts, req.specPath, req.action);
     const baseline = req.artifacts[phaseCfg.artifact];
     await syncArtifactToDisk(req.specPath, phaseCfg.artifact, baseline);
 
     const cfg = await getActiveProvider();
     const model = await buildChatModel(cfg);
     const { deepagents } = await loadDeps();
-    const { createDeepAgent, CompositeBackend, StateBackend } = deepagents;
-    const lcMessages = await toLcMessages(messages);
+    const lcMessages = await turnsToLcMessages(req.history, turnMessage(req));
 
-    const fsBackend = createFsBackend(deepagents, {
-      rootDir: projectRoot(req.specPath),
-      virtualMode: true,
-    });
-    const agent = createDeepAgent({
+    const agent = deepagents.createDeepAgent({
       model,
       systemPrompt: system,
-      backend: (runtime) =>
-        new CompositeBackend(fsBackend, {
-          "/conversation_history": new StateBackend(runtime),
-          "/large_tool_results": new StateBackend(runtime),
-        }),
+      backend: await buildProjectBackend(root),
       subagents: workerSubagents,
     });
     const finalState = await streamAgentTurn(
@@ -348,6 +388,20 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurnResu
 
     const after = await readArtifactFromDisk(req.specPath, phaseCfg.artifact);
     const changed = after !== null && after !== baseline;
+
+    if (changed) {
+      const settings = await loadSettings();
+      if (settings.autoCommit !== false) {
+        const specRel = path.relative(root, req.specPath);
+        const specId = path.basename(req.specPath);
+        await commitPaths(
+          root,
+          [specRel],
+          `docs(${specId}): update ${ARTIFACT_FILENAMES[phaseCfg.artifact]} (${req.phase} agent)`,
+        );
+      }
+    }
+
     return {
       reply,
       artifact: changed

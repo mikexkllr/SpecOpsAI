@@ -1,25 +1,23 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
-import type * as DeepAgents from "deepagents";
 import type {
   ArtifactFiles,
   CodeReviewReport,
   CodeReviewRequest,
   CodeReviewResult,
   FileChangeStatus,
-  FileReview,
   GenerateCodeReviewRequest,
   MarkedStory,
   ReviewVerdict,
   TaskChunk,
   TechnicalStory,
 } from "../shared/api";
-
-type BackendFactory = NonNullable<DeepAgents.CreateDeepAgentParams["backend"]>;
 import { buildChatModel } from "./models";
 import { getActiveProvider } from "./settings";
-import { loadDeps, createFsBackend } from "./deepagentsDeps";
+import { loadDeps } from "./deepagentsDeps";
+import { buildProjectBackend } from "./agentCommon";
+import { projectContextSections } from "./projectContext";
 import { makeBrowserTools, closeBrowser } from "./browserTools";
 import { readWorkers, markStoryImplemented } from "./worker";
 import { projectRoot, isAbortError, lastAssistantText } from "./utils";
@@ -45,6 +43,7 @@ function reviewSystemPrompt(
   task: TaskChunk,
   artifacts: ArtifactFiles,
   devServerUrl: string | undefined,
+  ctx: string[],
 ): string {
   const browserHint = devServerUrl
     ? `A dev server may be running at: ${devServerUrl}. Use browser tools to verify the feature works if it makes sense for this task.`
@@ -58,13 +57,15 @@ function reviewSystemPrompt(
     "1. Call `git_diff` to see what changed.",
     "2. Use filesystem tools (read_file, glob, grep) to read relevant source files for full context.",
     "3. Check: does the implementation satisfy the task acceptance criteria?",
-    "4. Check: any obvious bugs, missing edge cases, or spec violations?",
+    "4. Check: any obvious bugs, missing edge cases, spec violations, or breaches of the Project Constitution?",
     "5. " + browserHint,
     "6. Call `emit_review` exactly once with your verdict and a concise summary (3–8 sentences).",
     "",
     "## Verdict guide",
     '"approved": the implementation correctly satisfies the task with no blocking issues.',
     '"changes-requested": there are bugs, missing requirements, or the implementation clearly diverges from the spec.',
+    "",
+    ...ctx,
     "",
     "## Context",
     "",
@@ -80,17 +81,6 @@ function reviewSystemPrompt(
     `### Task: ${task.id} — ${task.title}`,
     task.description || "(no description)",
   ].join("\n");
-}
-
-async function buildReviewerBackend(root: string): Promise<BackendFactory> {
-  const { deepagents } = await loadDeps();
-  const { CompositeBackend, StateBackend } = deepagents;
-  const fsBackend = createFsBackend(deepagents, { rootDir: root, virtualMode: true });
-  return (runtime) =>
-    new CompositeBackend(fsBackend, {
-      "/conversation_history": new StateBackend(runtime),
-      "/large_tool_results": new StateBackend(runtime),
-    });
 }
 
 export async function runReviewerAgent(opts: ReviewerOptions): Promise<ReviewResult> {
@@ -143,11 +133,17 @@ export async function runReviewerAgent(opts: ReviewerOptions): Promise<ReviewRes
     );
 
     const browserTools = await browserHelper.buildTools();
-    const backend = await buildReviewerBackend(root);
+    const backend = await buildProjectBackend(root);
 
     const agent = deepagents.createDeepAgent({
       model,
-      systemPrompt: reviewSystemPrompt(story, task, artifacts, devServerUrl),
+      systemPrompt: reviewSystemPrompt(
+        story,
+        task,
+        artifacts,
+        devServerUrl,
+        await projectContextSections(root),
+      ),
       tools: [gitDiffTool, emitReview, ...browserTools],
       backend,
     });
@@ -337,7 +333,7 @@ export async function generateCodeReview(
       schema: z.object({}),
     });
 
-    const backend = await buildReviewerBackend(root);
+    const backend = await buildProjectBackend(root);
     const agent = deepagents.createDeepAgent({
       model,
       systemPrompt: system,
@@ -402,7 +398,7 @@ export async function runCodeReview(req: CodeReviewRequest): Promise<CodeReviewR
       schema: z.object({}),
     });
 
-    const backend = await buildReviewerBackend(root);
+    const backend = await buildProjectBackend(root);
     const agent = deepagents.createDeepAgent({
       model,
       systemPrompt: qaSystemPrompt(req),

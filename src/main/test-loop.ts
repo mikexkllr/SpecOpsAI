@@ -1,7 +1,6 @@
 import { exec, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { BaseMessage } from "@langchain/core/messages";
 import { z } from "zod";
 import type {
   ArtifactFiles,
@@ -14,7 +13,9 @@ import type {
 } from "../shared/api";
 import { buildChatModel } from "./models";
 import { getActiveProvider } from "./settings";
-import { loadDeps, createFsBackend } from "./deepagentsDeps";
+import { loadDeps } from "./deepagentsDeps";
+import { buildProjectBackend } from "./agentCommon";
+import { projectContextSections } from "./projectContext";
 import { projectRoot, lastAssistantText, isAbortError } from "./utils";
 
 const DEFAULT_MAX_ITERATIONS = 5;
@@ -186,7 +187,11 @@ async function runTests(specPath: string): Promise<TestRunResult[]> {
   return results;
 }
 
-function fixSystemPrompt(artifacts: ArtifactFiles, failures: TestRunResult[]): string {
+function fixSystemPrompt(
+  artifacts: ArtifactFiles,
+  failures: TestRunResult[],
+  ctx: string[],
+): string {
   const failureBlock = failures
     .map(
       (f) =>
@@ -208,6 +213,8 @@ function fixSystemPrompt(artifacts: ArtifactFiles, failures: TestRunResult[]): s
     "2. Use ls / read_file / edit_file / write_file to apply the fix.",
     "3. Reply with one or two sentences summarizing what you changed.",
     "",
+    ctx.join("\n\n"),
+    "",
     "## Project context",
     artifacts.spec.trim() ? `### Spec\n${artifacts.spec.trim()}` : "",
     artifacts.userStories.trim() ? `### User Stories\n${artifacts.userStories.trim()}` : "",
@@ -228,7 +235,7 @@ async function runFixAgent(
   const { deepagents, messages: M, tools: T } = await loadDeps();
   const { tool } = T;
   const { HumanMessage } = M;
-  const { createDeepAgent, CompositeBackend, StateBackend } = deepagents;
+  const { createDeepAgent } = deepagents;
 
   let captured: TestLoopVerdict = "fix-code";
 
@@ -250,19 +257,12 @@ async function runFixAgent(
 
   const cfg = await getActiveProvider();
   const model = await buildChatModel(cfg);
-  const fsBackend = createFsBackend(deepagents, {
-    rootDir: projectRoot(specPath),
-    virtualMode: true,
-  });
+  const root = projectRoot(specPath);
   const agent = createDeepAgent({
     model,
-    systemPrompt: fixSystemPrompt(artifacts, failures),
+    systemPrompt: fixSystemPrompt(artifacts, failures, await projectContextSections(root)),
     tools: [verdictTool],
-    backend: (runtime) =>
-      new CompositeBackend(fsBackend, {
-        "/conversation_history": new StateBackend(runtime),
-        "/large_tool_results": new StateBackend(runtime),
-      }),
+    backend: await buildProjectBackend(root),
   });
 
   const result = await agent.invoke(

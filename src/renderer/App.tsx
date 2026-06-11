@@ -1,9 +1,8 @@
-import React, { useEffect, useRef, useState, useMemo } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type {
   AgentActivityItem,
   AgentTurn,
-  ArtifactFiles,
-  ChatHistory,
+  ProjectContextInfo,
   ProjectInfo,
   SpecInfo,
 } from "../shared/api";
@@ -20,25 +19,16 @@ import { PhaseView } from "./PhaseView";
 import { ProjectBar } from "./ProjectBar";
 import { Settings } from "./Settings";
 import { EMPTY_ARTIFACTS, type Artifacts, type Phase } from "./phases";
-import { PROVIDER_DESCRIPTORS, type AgentMode, type AppSettings } from "../shared/api";
+import {
+  PROVIDER_DESCRIPTORS,
+  parseChatCommand,
+  type AgentMode,
+  type AppSettings,
+} from "../shared/api";
 
 const MemoizedPhaseView = React.memo(PhaseView);
 const MemoizedChat = React.memo(Chat);
 const MemoizedImplementationView = React.memo(ImplementationView);
-
-const ARTIFACT_KEYS: Record<keyof Artifacts, keyof ArtifactFiles> = {
-  spec: "spec",
-  userStories: "userStories",
-  technicalStories: "technicalStories",
-  code: "code",
-};
-
-const RENDERER_ARTIFACT_KEYS: Record<keyof ArtifactFiles, keyof Artifacts> = {
-  spec: "spec",
-  userStories: "userStories",
-  technicalStories: "technicalStories",
-  code: "code",
-};
 
 const EMPTY_MESSAGES: Record<Phase, ChatMessage[]> = {
   spec: [],
@@ -96,6 +86,10 @@ export function App(): JSX.Element {
   const [runningPhase, setRunningPhase] = useState<Phase | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Project context (constitution + codebase analysis) — shared by the
+  // project bar's analyze button and the /codebase chat command.
+  const [projectContext, setProjectContext] = useState<ProjectContextInfo | null>(null);
+  const [analyzingCodebase, setAnalyzingCodebase] = useState(false);
   const saveTimers = useRef<Partial<Record<keyof Artifacts, number>>>({});
   // The turn whose streamed `agent:event`s we should route into activity state.
   const activeTurn = useRef<{ turnId: string; phase: Phase } | null>(null);
@@ -109,6 +103,45 @@ export function App(): JSX.Element {
   useEffect(() => {
     window.specops.getSettings().then(setSettings);
   }, []);
+
+  // Load the project context whenever the project changes.
+  useEffect(() => {
+    setProjectContext(null);
+    if (!project) return;
+    let cancelled = false;
+    window.specops.getProjectContext(project.path).then((ctx) => {
+      if (!cancelled) setProjectContext(ctx);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [project]);
+
+  // Run (or join) a codebase analysis; main dedupes concurrent runs per project.
+  async function runCodebaseAnalysis(): Promise<{
+    ok: boolean;
+    message: string;
+    context?: ProjectContextInfo;
+  }> {
+    if (!project) return { ok: false, message: "open a project first" };
+    if (analyzingCodebase) return { ok: false, message: "analysis already running" };
+    setAnalyzingCodebase(true);
+    try {
+      const ctx = await window.specops.analyzeCodebase(project.path);
+      setProjectContext(ctx);
+      return ctx.codebase
+        ? {
+            ok: true,
+            message: "codebase analysis updated (.specops/codebase.md)",
+            context: ctx,
+          }
+        : { ok: false, message: "analysis produced no output" };
+    } catch (err) {
+      return { ok: false, message: `analysis failed: ${(err as Error).message}` };
+    } finally {
+      setAnalyzingCodebase(false);
+    }
+  }
 
   // Route live agent events into the activity state of the turn that produced
   // them. Subscribe once; `activeTurn` is a ref so this handler stays stable.
@@ -218,10 +251,10 @@ export function App(): JSX.Element {
       if (existing) window.clearTimeout(existing);
       if (opts?.flush) {
         saveTimers.current[key] = undefined;
-        void window.specops.writeArtifact(specPath, ARTIFACT_KEYS[key], value);
+        void window.specops.writeArtifact(specPath, key, value);
       } else {
         saveTimers.current[key] = window.setTimeout(() => {
-          window.specops.writeArtifact(specPath, ARTIFACT_KEYS[key], value);
+          window.specops.writeArtifact(specPath, key, value);
         }, 300);
       }
     }
@@ -239,6 +272,37 @@ export function App(): JSX.Element {
     const afterUser = { ...base, [phase]: withUser };
     setMessagesByPhase(afterUser);
     void window.specops.writeChat(specPath, afterUser);
+
+    const slash = parseChatCommand(text);
+
+    // "/codebase" is a project-level command: it runs the codebase-analysis
+    // agent (same flow as the project bar button), not the phase agent.
+    if (slash?.command === "codebase") {
+      setPending(true);
+      setRunningPhase(phase);
+      try {
+        const result = await runCodebaseAnalysis();
+        const reply = result.ok
+          ? [
+              "✓ Codebase analysis refreshed — written to `.specops/codebase.md` and injected into every agent prompt from now on.",
+              codebaseOverview(result.context),
+            ]
+              .filter(Boolean)
+              .join("\n\n")
+          : `⚠ ${result.message}`;
+        const afterAgent = {
+          ...afterUser,
+          [phase]: [...withUser, { role: "agent" as const, text: reply }],
+        };
+        setMessagesByPhase(afterAgent);
+        void window.specops.writeChat(specPath, afterAgent);
+      } finally {
+        setPending(false);
+        setRunningPhase(null);
+      }
+      return;
+    }
+
     const turnId = crypto.randomUUID();
     activeTurn.current = { turnId, phase };
     liveActivity.current = EMPTY_PHASE_ACTIVITY;
@@ -246,19 +310,23 @@ export function App(): JSX.Element {
     setRunningPhase(phase);
     setPending(true);
     try {
+      // "/clarify focus…" style drafts become structured actions: the slash
+      // command stays in the transcript, the focus text rides along separately.
       const result = await window.specops.agentChat({
         specPath,
         phase,
         artifacts,
         history,
-        message: text,
+        message: slash ? slash.rest : text,
+        // "codebase" already returned above, so this is narrowed to AgentAction.
+        action: slash?.command,
         turnId,
       });
       if (result.artifact) {
-        const artifactKey = RENDERER_ARTIFACT_KEYS[result.artifact.key];
-        updateArtifacts({ [artifactKey]: result.artifact.content } as Partial<Artifacts>, {
-          flush: true,
-        });
+        updateArtifacts(
+          { [result.artifact.key]: result.artifact.content } as Partial<Artifacts>,
+          { flush: true },
+        );
       }
       const trace = trimForPersist(liveActivity.current.items);
       const afterAgent = {
@@ -347,6 +415,9 @@ export function App(): JSX.Element {
       <ProjectBar
         project={project}
         activeSpec={activeSpec}
+        context={projectContext}
+        analyzingCodebase={analyzingCodebase}
+        onAnalyzeCodebase={runCodebaseAnalysis}
         onOpenProject={handleOpenProject}
         onCloseProject={handleCloseProject}
         onSelectSpec={(s) => {
@@ -471,6 +542,20 @@ function WindowControls(): JSX.Element {
       </button>
     </div>
   );
+}
+
+// Quote the analysis' "## Overview" section back into the chat so the user
+// sees what the agents will be grounded in, without opening the file.
+function codebaseOverview(ctx?: ProjectContextInfo): string {
+  const md = ctx?.codebase ?? "";
+  const m = md.match(/##\s*Overview\s*\n+([\s\S]*?)(?=\n##\s|$)/i);
+  const text = m?.[1].trim() ?? "";
+  if (!text) return "";
+  const capped = text.length > 400 ? text.slice(0, 400) + "…" : text;
+  return capped
+    .split("\n")
+    .map((l) => `> ${l}`)
+    .join("\n");
 }
 
 function providerLabel(settings: AppSettings | null): string {

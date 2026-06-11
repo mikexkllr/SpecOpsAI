@@ -21,6 +21,7 @@ import type {
 import { runAgentTurn, onAgentEvent } from "./agent";
 import {
   checkMergeReadiness,
+  checkoutSpecBranch,
   createSpec,
   listSpecs,
   loadProject,
@@ -29,6 +30,8 @@ import {
   readArtifacts,
   writeArtifact,
 } from "./project";
+import { syncWithRemote } from "./git";
+import { analyzeCodebase, readProjectContext } from "./projectContext";
 import { loadSession, saveSession } from "./session";
 import { readChat, writeChat } from "./chat";
 import { loadSettings, saveSettings } from "./settings";
@@ -259,6 +262,18 @@ function registerIpc(): void {
   );
   ipcMain.handle("merge:run", (_e, specPath: string) =>
     mergeSpecToMain(specPath, getTestLoopState()),
+  );
+
+  ipcMain.handle("git:sync", (_e, projectPath: string) => syncWithRemote(projectPath));
+  ipcMain.handle("spec:checkout", (_e, specPath: string) =>
+    checkoutSpecBranch(specPath),
+  );
+
+  ipcMain.handle("context:get", (_e, projectPath: string) =>
+    readProjectContext(projectPath),
+  );
+  ipcMain.handle("context:analyze", (_e, projectPath: string) =>
+    analyzeCodebase(projectPath),
   );
 
   ipcMain.handle("settings:get", () => loadSettings());

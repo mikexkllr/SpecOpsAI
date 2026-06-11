@@ -76,7 +76,15 @@ function defaultProvider(id: ProviderId): ProviderConfig {
 function defaultSettings(): AppSettings {
   const providers = {} as Record<ProviderId, ProviderConfig>;
   for (const d of PROVIDER_DESCRIPTORS) providers[d.id] = defaultProvider(d.id);
-  return { activeProvider: "anthropic", providers, agentMode: "hitl", codingAgent: "deepagent", devServerUrl: undefined, autoUpdate: true };
+  return {
+    activeProvider: "anthropic",
+    providers,
+    agentMode: "hitl",
+    codingAgent: "deepagent",
+    devServerUrl: undefined,
+    autoUpdate: true,
+    autoCommit: true,
+  };
 }
 
 function mergeSettings(raw: unknown): AppSettings {
@@ -97,6 +105,9 @@ function mergeSettings(raw: unknown): AppSettings {
   }
   if (typeof r.autoUpdate === "boolean") {
     base.autoUpdate = r.autoUpdate;
+  }
+  if (typeof r.autoCommit === "boolean") {
+    base.autoCommit = r.autoCommit;
   }
   if (r.providers && typeof r.providers === "object") {
     for (const d of PROVIDER_DESCRIPTORS) {

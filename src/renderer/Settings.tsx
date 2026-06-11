@@ -139,6 +139,10 @@ export function Settings({ onClose, onSaved }: Props): JSX.Element {
               codingAgent={settings.codingAgent}
               onChange={(codingAgent) => setSettings({ ...settings, codingAgent })}
             />
+            <GitSection
+              autoCommit={settings.autoCommit !== false}
+              onChange={(autoCommit) => setSettings({ ...settings, autoCommit })}
+            />
             <ReviewerSection
               devServerUrl={settings.devServerUrl ?? ""}
               onChange={(devServerUrl) => setSettings({ ...settings, devServerUrl: devServerUrl || undefined })}
@@ -316,7 +320,8 @@ function ThinkingField({
   const effort = thinking?.effort ?? "medium";
 
   const hint: Record<Exclude<ProviderDescriptor["thinking"], "none">, string> = {
-    budget: "stream the model's reasoning; higher budget = deeper thinking, more tokens",
+    budget:
+      "stream the model's reasoning; the token budget applies to older models — Claude 4.6+ uses adaptive thinking and decides depth itself",
     effort: "reasoning models only (o-series, gpt-5…) — ignored by gpt-4o and similar",
     toggle: "ask Ollama to emit reasoning — only works on models that support it",
   };
@@ -482,6 +487,49 @@ function CodingAgentSection({
             </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function GitSection({
+  autoCommit,
+  onChange,
+}: {
+  autoCommit: boolean;
+  onChange: (v: boolean) => void;
+}): JSX.Element {
+  const options: Array<{ id: boolean; label: string; description: string }> = [
+    {
+      id: true,
+      label: "auto-commit checkpoints",
+      description:
+        "commit spec artifacts after each agent edit and the working tree after each completed task — collaborators can pull labelled increments",
+    },
+    {
+      id: false,
+      label: "manual",
+      description: "SpecOps never commits — you control git entirely yourself",
+    },
+  ];
+  return (
+    <div className="divider-t" style={{ paddingTop: 18 }}>
+      <div className="section-title">git collaboration</div>
+      <div className="section-subtitle">
+        each spec lives on its own branch; chats and worker state are stored inside the spec
+        folder so they travel with it
+      </div>
+      <div className="flex-col" style={{ gap: 8, marginTop: 12 }}>
+        {options.map((opt) => (
+          <button
+            key={String(opt.id)}
+            onClick={() => onChange(opt.id)}
+            className={`option-card${opt.id === autoCommit ? " active" : ""}`}
+          >
+            <div className="opt-title">{opt.label}</div>
+            <div className="opt-desc">{opt.description}</div>
+          </button>
+        ))}
       </div>
     </div>
   );

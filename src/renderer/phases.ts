@@ -1,4 +1,7 @@
-export type Phase = "spec" | "user-story" | "technical-story" | "implementation";
+import type { ArtifactFiles, Phase } from "../shared/api";
+
+// Re-exported so renderer modules keep importing from "./phases".
+export type { Phase };
 
 export const PHASE_ORDER: Phase[] = ["spec", "user-story", "technical-story", "implementation"];
 
@@ -32,12 +35,8 @@ export function prevPhase(phase: Phase): Phase {
   return PHASE_ORDER[Math.max(i - 1, 0)];
 }
 
-export interface Artifacts {
-  spec: string;
-  userStories: string;
-  technicalStories: string;
-  code: string;
-}
+// The renderer's artifact state is exactly the on-disk artifact set.
+export type Artifacts = ArtifactFiles;
 
 export const EMPTY_ARTIFACTS: Artifacts = {
   spec: "",

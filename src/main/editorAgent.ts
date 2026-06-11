@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type * as DeepAgents from "deepagents";
 import type {
   ArtifactFiles,
   EditorAgentRequest,
@@ -8,32 +7,18 @@ import type {
 } from "../shared/api";
 import { buildChatModel } from "./models";
 import { getActiveProvider } from "./settings";
-import { loadDeps, createFsBackend } from "./deepagentsDeps";
+import { loadDeps } from "./deepagentsDeps";
+import { buildProjectBackend, turnsToLcMessages } from "./agentCommon";
+import { projectContextSections } from "./projectContext";
 import { workerSubagents } from "./workerSubagents";
 import { readWorkers, markStoryImplemented } from "./worker";
 import { projectRoot, lastAssistantText, isAbortError } from "./utils";
-
-type BackendFactory = NonNullable<DeepAgents.CreateDeepAgentParams["backend"]>;
 
 // One in-flight run per spec, so the editor's stop button can abort it.
 const controllers = new Map<string, AbortController>();
 
 export function stopEditorAgent(specPath: string): void {
   controllers.get(specPath)?.abort();
-}
-
-async function buildBackend(specPath: string): Promise<BackendFactory> {
-  const { deepagents } = await loadDeps();
-  const { CompositeBackend, StateBackend } = deepagents;
-  const fsBackend = createFsBackend(deepagents, {
-    rootDir: projectRoot(specPath),
-    virtualMode: true,
-  });
-  return (runtime) =>
-    new CompositeBackend(fsBackend, {
-      "/conversation_history": new StateBackend(runtime),
-      "/large_tool_results": new StateBackend(runtime),
-    });
 }
 
 function contextSections(artifacts: ArtifactFiles): string[] {
@@ -57,8 +42,9 @@ export async function runEditorAgent(
   const marked: MarkedStory[] = [];
   try {
     const cfg = await getActiveProvider();
-    const { deepagents, messages: M, tools: T } = await loadDeps();
+    const { deepagents, tools: T } = await loadDeps();
     const model = await buildChatModel(cfg);
+    const root = projectRoot(req.specPath);
 
     // A technical story is "done" when its worker state says so. Only whole
     // technical stories can be marked — never individual sub-tasks.
@@ -113,6 +99,8 @@ export async function runEditorAgent(
       "## How to respond",
       "After doing the work, reply in 1–4 sentences: what you changed (cite file paths) and which technical stories you marked done. Don't paste whole files back.",
       "",
+      ...(await projectContextSections(root)),
+      "",
       ...contextSections(req.artifacts),
       "## Open technical stories (candidates to implement / mark done)",
       openBlock,
@@ -121,17 +109,12 @@ export async function runEditorAgent(
     const agent = deepagents.createDeepAgent({
       model,
       systemPrompt: system,
-      backend: await buildBackend(req.specPath),
+      backend: await buildProjectBackend(root),
       tools: [listStories, markStory],
       subagents: workerSubagents,
     });
 
-    const lcMessages = [
-      ...req.history.map((m) =>
-        m.role === "user" ? new M.HumanMessage(m.text) : new M.AIMessage(m.text),
-      ),
-      new M.HumanMessage(req.message),
-    ];
+    const lcMessages = await turnsToLcMessages(req.history, req.message);
     const result = await agent.invoke({ messages: lcMessages }, { signal: ac.signal });
     return { reply: lastAssistantText(result) || "(no reply)", markedImplemented: marked };
   } catch (err) {

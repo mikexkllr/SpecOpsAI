@@ -375,6 +375,15 @@ input::placeholder, textarea::placeholder {
 
 .projectbar .right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
 
+.projectbar .bar-notice {
+  font-size: var(--fs-xs);
+  color: var(--fg-2);
+  max-width: 380px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- Phase nav ---------- */
 
 .phasenav {
@@ -865,11 +874,42 @@ pre.terminal-msg.terminal-live {
   border-color: color-mix(in srgb, var(--warning, #f59e0b) 40%, transparent);
 }
 
+.chat-actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px 0;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-0);
+  flex-shrink: 0;
+}
+
+.chat-action {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--fg-2);
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms;
+}
+
+.chat-action:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chat-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .chat-input-row {
   display: flex;
   gap: 6px;
   padding: 8px;
-  border-top: 1px solid var(--border-subtle);
+  border-top: none;
   background: var(--bg-0);
   flex-shrink: 0;
 }

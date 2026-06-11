@@ -19,7 +19,74 @@ export interface ArtifactFiles {
   code: string;
 }
 
+// Canonical artifact filenames inside a spec folder — single source of truth
+// for the main process (project.ts, agent.ts) and prompts.
+export const ARTIFACT_FILENAMES: Record<keyof ArtifactFiles, string> = {
+  spec: "spec.md",
+  userStories: "user-stories.md",
+  technicalStories: "technical-stories.md",
+  code: "code.md",
+};
+
 export type Phase = "spec" | "user-story" | "technical-story" | "implementation";
+
+// --- project context (constitution + codebase analysis) --------------------
+
+// Project-wide context that grounds every agent: a user-editable constitution
+// (engineering principles all agents must respect) and a generated codebase
+// analysis (architecture, conventions, commands) for brownfield projects.
+// Both live under <project>/.specops/ so they are shared via git.
+export interface ProjectContextInfo {
+  constitution: string;
+  codebase: string;
+  // ISO timestamp of the last codebase analysis (file mtime), if any.
+  codebaseAnalyzedAt?: string;
+}
+
+// --- structured chat commands (Spec Kit-style verbs) ------------------------
+
+// Actions handled by the phase agent: each maps to a focused instruction block
+// appended to the system prompt; the user message stays a short
+// "/clarify"-style marker in the transcript.
+export type AgentAction = "clarify" | "analyze" | "ground";
+
+// All slash commands available in a phase chat. `codebase` is special: it does
+// not run through the phase agent — the renderer routes it to the project-level
+// codebase-analysis agent (same flow as the project-bar button).
+export type ChatCommand = AgentAction | "codebase";
+
+export const CHAT_COMMANDS: Array<{ id: ChatCommand; label: string; hint: string }> = [
+  {
+    id: "clarify",
+    label: "/clarify",
+    hint: "find ambiguities in the current artifact and ask targeted questions",
+  },
+  {
+    id: "analyze",
+    label: "/analyze",
+    hint: "cross-check spec ↔ stories for coverage gaps and contradictions",
+  },
+  {
+    id: "ground",
+    label: "/ground",
+    hint: "verify the artifact against the real codebase and flag mismatches",
+  },
+  {
+    id: "codebase",
+    label: "/codebase",
+    hint: "analyze the repository and refresh .specops/codebase.md — grounds all agents",
+  },
+];
+
+// Parse a chat draft like "/clarify" or "/analyze focus on auth" into a
+// command plus the remaining free-text instruction (may be empty).
+export function parseChatCommand(
+  text: string,
+): { command: ChatCommand; rest: string } | null {
+  const m = text.trim().match(/^\/(clarify|analyze|ground|codebase)\b\s*([\s\S]*)$/);
+  if (!m) return null;
+  return { command: m[1] as ChatCommand, rest: m[2].trim() };
+}
 
 // One entry in a persisted agent-turn trace: reasoning ("thinking"), nested
 // subagent visible text ("subtext"), or a tool call. Mirrors the live activity
@@ -59,6 +126,9 @@ export interface AgentTurnRequest {
   artifacts: ArtifactFiles;
   history: AgentTurn[];
   message: string;
+  // Structured action (slash command) — expands to a focused instruction block
+  // in the system prompt; `message` then carries any extra user focus text.
+  action?: AgentAction;
   // Correlates the live `agent:event` stream below with this turn. The renderer
   // generates it; the main process stamps every streamed event with it.
   turnId?: string;
@@ -258,6 +328,24 @@ export interface MergeResult {
   error?: string;
 }
 
+// Result of "sync with remote": fetch + pull --rebase + push of the current
+// branch. `message` is a short human-readable summary for the project bar.
+export interface GitSyncResult {
+  ok: boolean;
+  branch: string;
+  message: string;
+}
+
+// Result of switching to a spec's branch when the user selects it in the UI.
+// Checkout is skipped (with a warning) rather than forced when the working
+// tree is dirty, so collaborators never lose uncommitted work.
+export interface CheckoutSpecBranchResult {
+  ok: boolean;
+  branch: string;
+  // Present when checkout was skipped or failed — shown as a notice in the UI.
+  warning?: string;
+}
+
 // --- Code Studio (interactive viewer / editor / reviewer) ------------------
 
 // One node in the project source tree, rooted at the project root. Paths are
@@ -390,6 +478,10 @@ export interface AppSettings {
   // When true, the app checks GitHub Releases for a newer version on startup and
   // downloads it in the background. The user always confirms the final restart.
   autoUpdate?: boolean;
+  // When true (default), SpecOps commits checkpoints automatically: spec
+  // artifacts after each agent edit, and the working tree after each completed
+  // worker task — so collaborators can pull coherent, labelled increments.
+  autoCommit?: boolean;
 }
 
 // Phases of the auto-updater state machine, mirrored to the renderer so the
@@ -437,9 +529,10 @@ export const PROVIDER_DESCRIPTORS: ProviderDescriptor[] = [
     label: "Anthropic",
     needsApiKey: true,
     defaultBaseUrl: "https://api.anthropic.com",
-    defaultModel: "claude-sonnet-4-5",
-    suggestedModels: ["claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5"],
-    description: "Claude models via api.anthropic.com.",
+    defaultModel: "claude-opus-4-8",
+    suggestedModels: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+    description:
+      "Claude models via api.anthropic.com. On Claude 4.6+ models, enabling thinking uses adaptive thinking (the budget applies only to older models).",
     thinking: "budget",
     defaultThinkingBudget: 2048,
   },
@@ -572,6 +665,10 @@ export interface SpecOpsApi {
   onTestLoopUpdate(callback: (state: TestLoopState) => void): () => void;
   checkMerge(specPath: string): Promise<MergeCheckResult>;
   mergeToMain(specPath: string): Promise<MergeResult>;
+  gitSync(projectPath: string): Promise<GitSyncResult>;
+  checkoutSpecBranch(specPath: string): Promise<CheckoutSpecBranchResult>;
+  getProjectContext(projectPath: string): Promise<ProjectContextInfo>;
+  analyzeCodebase(projectPath: string): Promise<ProjectContextInfo>;
   getSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<AppSettings>;
   getUpdateStatus(): Promise<UpdateStatus>;

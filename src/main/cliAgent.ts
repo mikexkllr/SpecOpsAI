@@ -214,6 +214,7 @@ export function buildCliTaskPrompt(
   task: TaskChunk,
   story: TechnicalStory,
   artifacts: ArtifactFiles,
+  projectContext: string[] = [],
 ): string {
   const sections: string[] = [
     `Implement task ${task.id} — "${task.title}" — which is part of technical story ${story.id}.`,
@@ -226,9 +227,13 @@ export function buildCliTaskPrompt(
     `**Title**: ${task.title}`,
     task.description ? `**Acceptance criteria**: ${task.description}` : "",
     "",
-    "## Context from earlier phases",
   ];
 
+  if (projectContext.length) {
+    sections.push(...projectContext, "");
+  }
+
+  sections.push("## Context from earlier phases");
   if (artifacts.spec.trim()) {
     sections.push("### Spec", artifacts.spec.trim(), "");
   }
@@ -238,6 +243,7 @@ export function buildCliTaskPrompt(
 
   sections.push(
     "Read the relevant source files to understand existing patterns, then make the necessary changes to implement this task.",
+    "Make the smallest change that satisfies the acceptance criteria and match the codebase's existing conventions.",
     "Focus on this task only. When done, briefly describe what you changed.",
   );
 
