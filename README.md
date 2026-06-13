@@ -45,9 +45,13 @@ Three pillars make the workflow more than a chat wrapper:
 ## Demo
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=f36oq2NN3-Q">
-    <img src="https://img.youtube.com/vi/f36oq2NN3-Q/maxresdefault.jpg" alt="SpecOps AI demo video" width="780"/>
+  <a href="https://youtu.be/v8diYicjxjY">
+    <img src="assets/youtube-thumbnail.png" alt="Watch the SpecOps AI demo on YouTube" width="780"/>
   </a>
+</p>
+
+<p align="center">
+  <a href="https://youtu.be/v8diYicjxjY">▶ Watch the demo on YouTube</a>
 </p>
 
 ---
