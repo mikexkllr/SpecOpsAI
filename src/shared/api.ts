@@ -309,6 +309,111 @@ export interface TestLoopRequest {
   maxIterations?: number;
 }
 
+// --- Playwright runner (integration tests against the real app) ------------
+
+// Whether the target project is ready to run Playwright tests, plus the test
+// files that already exist on disk (so results survive an app restart).
+export interface PlaywrightStatus {
+  // @playwright/test is a (dev)dependency or present in node_modules.
+  installed: boolean;
+  // A playwright.config.{ts,js,mjs,cjs} exists at the project root.
+  configPresent: boolean;
+  testFiles: IntegrationTestFile[];
+}
+
+export interface IntegrationTestFile {
+  // Repo-relative posix path, e.g. "tests/integration/US-1.spec.ts".
+  path: string;
+  // Story id derived from the filename ("US-1.spec.ts" → "US-1"), if any.
+  storyId?: string;
+}
+
+export interface PlaywrightSetupResult {
+  status: PlaywrightStatus;
+  // Accumulated log of the setup commands (also streamed live).
+  log: string;
+  error?: string;
+}
+
+export interface IntegrationRunRequest {
+  specPath: string;
+  // Repo-relative spec file to run; omit to run the whole tests/integration dir.
+  file?: string;
+}
+
+export interface IntegrationRunResult {
+  file?: string;
+  passed: boolean;
+  exitCode: number;
+  // Combined stdout+stderr tail (full output is streamed live).
+  output: string;
+  duration: number;
+  error?: string;
+}
+
+// --- Code walkthrough (guided tour of freshly generated code) ---------------
+
+// One stop on the tour: a file region plus a markdown explanation of what the
+// code does and why it looks the way it does.
+export interface WalkthroughStep {
+  title: string;
+  // Repo-relative posix path.
+  file: string;
+  // 1-based inclusive line range within the file; omitted = whole file.
+  startLine?: number;
+  endLine?: number;
+  explanation: string;
+}
+
+export interface CodeWalkthrough {
+  title: string;
+  // Markdown orientation shown before step 1: what was built, how it hangs together.
+  intro: string;
+  steps: WalkthroughStep[];
+  generatedAt: string;
+  error?: string;
+}
+
+export interface GenerateWalkthroughRequest {
+  specPath: string;
+  artifacts: ArtifactFiles;
+  // Optional emphasis, e.g. "the changes for TS-2 (drag & drop)" after a story run.
+  focus?: string;
+}
+
+// --- App preview (internal browser + managed dev server) --------------------
+
+// Best-effort detection of whether the generated project is web-based and how
+// to serve it, derived from package.json (or a bare index.html).
+export interface PreviewInfo {
+  webBased: boolean;
+  // Human label of what was detected: "vite", "next", "static html", …
+  framework?: string;
+  // Shell command that serves the app (e.g. "npm run dev"), when one exists.
+  command?: string;
+  // Best-guess URL: settings.devServerUrl override, a port inferred from the
+  // framework/scripts, or a file:// URL for static sites.
+  url?: string;
+  // Why the project was / wasn't considered web-based (shown in the empty state).
+  reason?: string;
+}
+
+export type DevServerPhase = "stopped" | "starting" | "running" | "error";
+
+export interface DevServerState {
+  phase: DevServerPhase;
+  // Resolved URL once the server is reachable (or the static file:// URL).
+  url?: string;
+  command?: string;
+  // Project root the server belongs to — a different project restarts it.
+  projectRoot?: string;
+  error?: string;
+}
+
+export type DevServerEvent =
+  | { kind: "status"; state: DevServerState }
+  | { kind: "output"; text: string };
+
 export interface MergeCheckResult {
   ready: boolean;
   branch: string;
@@ -659,6 +764,19 @@ export interface SpecOpsApi {
   reviewCode(request: CodeReviewRequest): Promise<CodeReviewResult>;
   runEditorAgent(request: EditorAgentRequest): Promise<EditorAgentResult>;
   stopEditorAgent(specPath: string): Promise<void>;
+  generateWalkthrough(request: GenerateWalkthroughRequest): Promise<CodeWalkthrough>;
+  readWalkthrough(specPath: string): Promise<CodeWalkthrough | null>;
+  getPlaywrightStatus(specPath: string): Promise<PlaywrightStatus>;
+  setupPlaywright(specPath: string): Promise<PlaywrightSetupResult>;
+  runIntegrationTests(request: IntegrationRunRequest): Promise<IntegrationRunResult>;
+  stopIntegrationTests(): Promise<void>;
+  onIntegrationOutput(callback: (data: { text: string }) => void): () => void;
+  detectPreview(specPath: string): Promise<PreviewInfo>;
+  startDevServer(specPath: string): Promise<DevServerState>;
+  stopDevServer(): Promise<DevServerState>;
+  getDevServerState(): Promise<DevServerState>;
+  onDevServerEvent(callback: (event: DevServerEvent) => void): () => void;
+  openExternal(url: string): Promise<void>;
   startTestLoop(request: TestLoopRequest): Promise<void>;
   stopTestLoop(): Promise<void>;
   getTestLoopState(): Promise<TestLoopState>;

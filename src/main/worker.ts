@@ -716,7 +716,8 @@ function playwrightPromptSection(): string {
     "- Use Playwright locators (`page.getByRole`, `page.getByText`, `page.getByTestId`, `page.locator`) — avoid raw CSS selectors when semantic locators work.",
     "- Use `await expect(...)` assertions (e.g., `toBeVisible()`, `toHaveText()`, `toHaveURL()`).",
     "- Add `test.beforeEach` for shared navigation / setup steps.",
-    "- Use `// TODO:` comments for app-specific URLs or selectors that must be adapted to the real app.",
+    "- A `playwright.config.ts` with `baseURL` is (or will be) configured for this project — navigate with relative paths like `await page.goto('/')` instead of hardcoding hosts.",
+    "- Use `// TODO:` comments for app-specific selectors that must be adapted to the real app.",
     "- Do NOT import anything that doesn't ship with `@playwright/test`.",
     "- The file must be valid TypeScript that passes `tsc --noEmit` against `@playwright/test` types.",
   ].join("\n");

@@ -32,6 +32,12 @@ Three pillars make the workflow more than a chat wrapper:
   branch. With auto-commit on (default), artifact edits and completed worker
   tasks become labelled commits, and the project bar has one-click
   sync (fetch + rebase + push). Selecting a spec checks out its branch.
+- **See it, test it, understand it.** After the Workers finish a story, a
+  walkthrough agent generates a guided, step-by-step tour of the changes
+  (file by file, with the reasoning); a built-in **Playwright runner** sets up
+  `@playwright/test` in the target project and runs the generated integration
+  specs with live output; and for web apps an **internal browser preview**
+  starts the project's dev server and renders the app right inside SpecOps.
 
 > **Terminology note.** In this repo, a **Worker** is our ephemeral per-story /
 > per-task deep-agent instance. It is *not* the same thing as a deepagents
@@ -333,12 +339,31 @@ above.
 This is the only phase where the code becomes visible, and it is also the
 richest UI. It does **not** use `PhaseView` — it switches to the
 [`ImplementationView`](src/renderer/ImplementationView.tsx) component
-([App.tsx:221-229](src/renderer/App.tsx#L221-L229)), which exposes four tabs:
+([App.tsx:221-229](src/renderer/App.tsx#L221-L229)), which exposes seven tabs:
 
 - **`workers`** — the per-story Worker workspace.
-- **`integration`** — integration-test generation per User Story.
-- **`testloop`** — the autonomous test-fix loop.
-- **`code`** — a minimal markdown/code editor for `code.md`.
+- **`walkthrough`** — a guided, step-by-step tour of the generated code
+  ([walkthrough.ts](src/main/walkthrough.ts) +
+  [WalkthroughPanel.tsx](src/renderer/components/WalkthroughPanel.tsx)): the
+  agent inspects the branch diff, picks 4–10 file regions, and explains each
+  one; the panel plays them back with prev/next navigation and the code
+  scrolled to the highlighted lines. Generated automatically when a story run
+  completes (a banner offers "walk me through it"), or on demand.
+- **`code review`** — the self-review report + Q&A over the branch changes.
+- **`integration tests`** — integration-test generation per User Story, plus
+  the **Playwright runner**
+  ([playwrightRunner.ts](src/main/playwrightRunner.ts)): one-click setup of
+  `@playwright/test` in the target project (dependency, `playwright.config.ts`
+  with `baseURL`/`webServer`, chromium download) and per-story or run-all
+  execution of the specs with live streamed output.
+- **`test loop`** — the autonomous test-fix loop.
+- **`preview`** — an internal browser for web-based projects
+  ([devServer.ts](src/main/devServer.ts) +
+  [PreviewPanel.tsx](src/renderer/components/PreviewPanel.tsx)): detects the
+  framework from `package.json`, starts/stops the dev server, resolves its URL
+  from the server output, and renders the app in an Electron `<webview>` with
+  a URL bar, responsive width presets, and the server log.
+- **`code editor`** — the file explorer + editor with the embedded coding agent.
 
 For each Technical Story (parsed from `technical-stories.md` via
 [`parseTechnicalStories`](src/renderer/technical-stories.ts)) the agent can:

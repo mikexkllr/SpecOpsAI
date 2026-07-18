@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   AgentStreamEvent,
   ArtifactFiles,
+  DevServerEvent,
   SpecOpsApi,
   TestLoopState,
   UpdateStatus,
@@ -55,6 +56,33 @@ const api: SpecOpsApi = {
     ipcRenderer.invoke("worker:generate-unit-tests", request),
   generateIntegrationTests: (request) =>
     ipcRenderer.invoke("worker:generate-integration-tests", request),
+  generateWalkthrough: (request) => ipcRenderer.invoke("walkthrough:generate", request),
+  readWalkthrough: (specPath) => ipcRenderer.invoke("walkthrough:read", specPath),
+  getPlaywrightStatus: (specPath) => ipcRenderer.invoke("playwright:status", specPath),
+  setupPlaywright: (specPath) => ipcRenderer.invoke("playwright:setup", specPath),
+  runIntegrationTests: (request) => ipcRenderer.invoke("playwright:run", request),
+  stopIntegrationTests: () => ipcRenderer.invoke("playwright:stop"),
+  onIntegrationOutput: (callback: (data: { text: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { text: string }) =>
+      callback(data);
+    ipcRenderer.on("integration:output", handler);
+    return () => {
+      ipcRenderer.removeListener("integration:output", handler);
+    };
+  },
+  detectPreview: (specPath) => ipcRenderer.invoke("preview:detect", specPath),
+  startDevServer: (specPath) => ipcRenderer.invoke("devserver:start", specPath),
+  stopDevServer: () => ipcRenderer.invoke("devserver:stop"),
+  getDevServerState: () => ipcRenderer.invoke("devserver:state"),
+  onDevServerEvent: (callback: (event: DevServerEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, event: DevServerEvent) =>
+      callback(event);
+    ipcRenderer.on("devserver:event", handler);
+    return () => {
+      ipcRenderer.removeListener("devserver:event", handler);
+    };
+  },
+  openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
   startTestLoop: (request) => ipcRenderer.invoke("testloop:start", request),
   stopTestLoop: () => ipcRenderer.invoke("testloop:stop"),
   getTestLoopState: () => ipcRenderer.invoke("testloop:state"),

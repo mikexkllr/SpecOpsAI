@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } from "electron";
 import * as path from "path";
 import type {
   AgentTurnRequest,
@@ -10,6 +10,8 @@ import type {
   GenerateCodeReviewRequest,
   GenerateIntegrationTestsRequest,
   GenerateUnitTestsRequest,
+  GenerateWalkthroughRequest,
+  IntegrationRunRequest,
   ReviewTaskRequest,
   SessionState,
   TaskStatus,
@@ -65,6 +67,22 @@ import {
   quitAndInstallUpdate,
   setAutoUpdate,
 } from "./updater";
+import { generateWalkthrough, readWalkthrough } from "./walkthrough";
+import {
+  getPlaywrightStatus,
+  onIntegrationOutput,
+  runIntegrationTests,
+  setupPlaywright,
+  stopIntegrationRun,
+} from "./playwrightRunner";
+import {
+  detectPreview,
+  disposeDevServer,
+  getDevServerState,
+  onDevServerEvent,
+  startDevServer,
+  stopDevServer,
+} from "./devServer";
 
 const isDev = !app.isPackaged;
 
@@ -121,6 +139,8 @@ function createWindow(): void {
       preload: path.join(__dirname, "../preload/preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // The app-preview tab embeds the generated app in a <webview>.
+      webviewTag: true,
     },
   });
 
@@ -251,6 +271,34 @@ function registerIpc(): void {
     stopEditorAgent(specPath);
   });
 
+  ipcMain.handle("walkthrough:generate", (_e, request: GenerateWalkthroughRequest) =>
+    generateWalkthrough(request),
+  );
+  ipcMain.handle("walkthrough:read", (_e, specPath: string) =>
+    readWalkthrough(specPath),
+  );
+
+  ipcMain.handle("playwright:status", (_e, specPath: string) =>
+    getPlaywrightStatus(specPath),
+  );
+  ipcMain.handle("playwright:setup", (_e, specPath: string) =>
+    setupPlaywright(specPath),
+  );
+  ipcMain.handle("playwright:run", (_e, request: IntegrationRunRequest) =>
+    runIntegrationTests(request),
+  );
+  ipcMain.handle("playwright:stop", () => stopIntegrationRun());
+
+  ipcMain.handle("preview:detect", (_e, specPath: string) => detectPreview(specPath));
+  ipcMain.handle("devserver:start", (_e, specPath: string) => startDevServer(specPath));
+  ipcMain.handle("devserver:stop", () => stopDevServer());
+  ipcMain.handle("devserver:state", () => getDevServerState());
+
+  ipcMain.handle("shell:open-external", (_e, url: string) => {
+    // Only ever open web URLs from the preview — never file:// or custom schemes.
+    if (/^https?:\/\//.test(url)) return shell.openExternal(url);
+  });
+
   ipcMain.handle("testloop:start", (_e, request: TestLoopRequest) =>
     startTestLoop(request),
   );
@@ -324,6 +372,18 @@ app.whenReady().then(() => {
     }
   });
 
+  onIntegrationOutput((data) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("integration:output", data);
+    }
+  });
+
+  onDevServerEvent((event) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("devserver:event", event);
+    }
+  });
+
   onAgentEvent((event) => {
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send("agent:event", event);
@@ -339,6 +399,12 @@ app.whenReady().then(() => {
   // Honour the persisted auto-update preference (default on). Kicks off a
   // background check when enabled; a no-op in dev where updates are disabled.
   void loadSettings().then((s) => initAutoUpdater({ autoUpdate: s.autoUpdate !== false }));
+});
+
+app.on("before-quit", () => {
+  // Kill any dev server / Playwright child so no orphan keeps ports busy.
+  disposeDevServer();
+  stopIntegrationRun();
 });
 
 app.on("window-all-closed", () => {

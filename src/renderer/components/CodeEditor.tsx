@@ -77,7 +77,8 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function highlight(code: string, path: string): string {
+// Exported for reuse by other code-viewing components (e.g. the walkthrough).
+export function highlight(code: string, path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   const lang = LANG_BY_EXT[ext];
   const grammar = lang ? Prism.languages[lang] : undefined;

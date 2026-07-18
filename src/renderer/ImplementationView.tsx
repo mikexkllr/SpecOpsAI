@@ -21,6 +21,8 @@ import { IntegrationTestsPanel } from "./components/IntegrationTestsPanel";
 import { TestLoopPanel } from "./components/TestLoopPanel";
 import { CodeReviewer } from "./components/CodeReviewer";
 import { CodeEditor, type OpenFileRequest } from "./components/CodeEditor";
+import { WalkthroughPanel } from "./components/WalkthroughPanel";
+import { PreviewPanel } from "./components/PreviewPanel";
 
 interface ImplementationViewProps {
   specPath: string;
@@ -28,7 +30,14 @@ interface ImplementationViewProps {
   agentMode: "hitl" | "yolo";
 }
 
-type Tab = "stories" | "reviewer" | "integration" | "testloop" | "editor";
+type Tab =
+  | "stories"
+  | "walkthrough"
+  | "reviewer"
+  | "integration"
+  | "testloop"
+  | "preview"
+  | "editor";
 
 function toApiArtifacts(a: Artifacts): ArtifactFiles {
   return {
@@ -83,6 +92,11 @@ export function ImplementationView({
   } | null>(null);
   const [cliBuffers, setCliBuffers] = useState<Record<string, string>>({});
   const stopRef = useRef(false);
+  // After a story run completes, a walkthrough is generated in the background;
+  // the token tells the panel to re-read it and the flag shows the banner.
+  const [walkthroughRefresh, setWalkthroughRefresh] = useState(0);
+  const [walkthroughReady, setWalkthroughReady] = useState(false);
+  const walkthroughBusyRef = useRef(false);
 
   useEffect(() => {
     window.specops.readWorkers(specPath).then(setStore);
@@ -256,6 +270,31 @@ export function ImplementationView({
     }
   }
 
+  // "Walk me through the code": once a story's tasks are all done, generate a
+  // guided tour of the changes in the background and offer it in a banner.
+  function maybeAutoWalkthrough(story: TechnicalStory, state: WorkerState | undefined): void {
+    if (!state || state.error || stopRef.current) return;
+    if (state.tasks.length === 0 || !state.tasks.every((t) => t.status === "done")) return;
+    if (walkthroughBusyRef.current) return;
+    walkthroughBusyRef.current = true;
+    window.specops
+      .generateWalkthrough({
+        specPath,
+        artifacts: toApiArtifacts(artifacts),
+        focus: `the changes for ${story.id} — ${story.title}`,
+      })
+      .then((wt) => {
+        if (!wt.error) {
+          setWalkthroughRefresh((n) => n + 1);
+          setWalkthroughReady(true);
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        walkthroughBusyRef.current = false;
+      });
+  }
+
   async function runTask(
     story: TechnicalStory,
     taskId: string,
@@ -308,6 +347,7 @@ export function ImplementationView({
           return;
         }
       }
+      maybeAutoWalkthrough(selectedStory, state);
     } catch (err) {
       // Without this, a rejected IPC call (e.g. decompose/run throwing in the
       // main process) is swallowed as an unhandled rejection and the UI shows
@@ -356,73 +396,67 @@ export function ImplementationView({
     }
   }
 
-  if (tab === "reviewer") {
-    return (
-      <div className="flex-col flex-1">
-        <Tabs tab={tab} onChange={setTab} />
-        <CodeReviewer
-          specPath={specPath}
-          artifacts={artifacts}
-          stories={stories}
-          onOpenFile={(path) => {
-            setEditorRequest({ path, id: Date.now() });
-            setTab("editor");
-          }}
-        />
-      </div>
-    );
+  function openInEditor(path: string): void {
+    setEditorRequest({ path, id: Date.now() });
+    setTab("editor");
   }
 
-  if (tab === "editor") {
-    return (
-      <div className="flex-col flex-1">
-        <Tabs tab={tab} onChange={setTab} />
-        <CodeEditor
-          specPath={specPath}
-          artifacts={artifacts}
-          stories={stories}
-          openRequest={editorRequest}
-        />
-      </div>
+  let content: JSX.Element;
+  if (tab === "walkthrough") {
+    content = (
+      <WalkthroughPanel
+        specPath={specPath}
+        artifacts={artifacts}
+        refreshToken={walkthroughRefresh}
+        onOpenFile={openInEditor}
+      />
     );
-  }
-
-  if (tab === "integration") {
-    return (
-      <div className="flex-col flex-1">
-        <Tabs tab={tab} onChange={setTab} />
-        <IntegrationTestsPanel
-          userStories={userStories}
-          results={integrationByStory}
-          busyId={integrationBusy}
-          onGenerate={generateIntegrationFor}
-        />
-      </div>
+  } else if (tab === "reviewer") {
+    content = (
+      <CodeReviewer
+        specPath={specPath}
+        artifacts={artifacts}
+        stories={stories}
+        onOpenFile={openInEditor}
+      />
     );
-  }
-
-  if (tab === "testloop") {
-    return (
-      <div className="flex-col flex-1">
-        <Tabs tab={tab} onChange={setTab} />
-        <TestLoopPanel
-          state={testLoopState}
-          onStart={startTestLoop}
-          onStop={stopTestLoop}
-          mergeCheck={mergeCheck}
-          mergeResult={mergeResult}
-          mergeBusy={mergeBusy}
-          onCheckMerge={runMergeCheck}
-          onMerge={runMerge}
-        />
-      </div>
+  } else if (tab === "editor") {
+    content = (
+      <CodeEditor
+        specPath={specPath}
+        artifacts={artifacts}
+        stories={stories}
+        openRequest={editorRequest}
+      />
     );
-  }
-
-  return (
-    <div className="flex-col flex-1">
-      <Tabs tab={tab} onChange={setTab} />
-      {stories.length === 0 ? (
+  } else if (tab === "integration") {
+    content = (
+      <IntegrationTestsPanel
+        specPath={specPath}
+        userStories={userStories}
+        results={integrationByStory}
+        busyId={integrationBusy}
+        onGenerate={generateIntegrationFor}
+      />
+    );
+  } else if (tab === "testloop") {
+    content = (
+      <TestLoopPanel
+        state={testLoopState}
+        onStart={startTestLoop}
+        onStop={stopTestLoop}
+        mergeCheck={mergeCheck}
+        mergeResult={mergeResult}
+        mergeBusy={mergeBusy}
+        onCheckMerge={runMergeCheck}
+        onMerge={runMerge}
+      />
+    );
+  } else if (tab === "preview") {
+    content = <PreviewPanel specPath={specPath} />;
+  } else {
+    content =
+      stories.length === 0 ? (
         <EmptyStories />
       ) : (
         <div
@@ -469,7 +503,34 @@ export function ImplementationView({
             <div style={{ padding: 24, color: "var(--fg-2)" }}>select a story</div>
           )}
         </div>
+      );
+  }
+
+  return (
+    <div className="flex-col flex-1">
+      <Tabs tab={tab} onChange={setTab} />
+      {walkthroughReady && tab !== "walkthrough" && (
+        <div className="walkthrough-banner">
+          <span>✓ code generated — a walkthrough of the changes is ready</span>
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={() => {
+              setWalkthroughReady(false);
+              setTab("walkthrough");
+            }}
+          >
+            walk me through it
+          </button>
+          <button
+            className="btn-icon"
+            title="dismiss"
+            onClick={() => setWalkthroughReady(false)}
+          >
+            ✕
+          </button>
+        </div>
       )}
+      {content}
     </div>
   );
 }
@@ -477,9 +538,11 @@ export function ImplementationView({
 function Tabs({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }): JSX.Element {
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: "stories", label: "workers" },
+    { id: "walkthrough", label: "walkthrough" },
     { id: "reviewer", label: "code review" },
     { id: "integration", label: "integration tests" },
     { id: "testloop", label: "test loop" },
+    { id: "preview", label: "preview" },
     { id: "editor", label: "code editor" },
   ];
   return (
